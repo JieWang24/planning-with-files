@@ -19,7 +19,7 @@ def main() -> None:
             adapter.emit_json({"systemMessage": f"[planning-with-files] Session plan bound to: {plan_id}"})
         return
 
-    if not adapter.ensure_session_plan(root, session_id):
+    if not adapter.effective_plan_present(root, session_id):
         return
 
     stdout, _ = adapter.run_shell_script("post-tool-use.sh", root, session_id)

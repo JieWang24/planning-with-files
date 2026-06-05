@@ -281,12 +281,20 @@ def has_temporary_task_keyword(payload: dict[str, Any]) -> bool:
 def is_session_attached(root: Path, session_id: str | None) -> bool:
     """Return True if this session should receive plan context.
 
-    Legacy mode: if .planning/sessions/ does not exist, always return True so
-    existing single-session users are not broken on upgrade.
-    Isolation mode: return True only when the session has an attached sentinel.
-
-    Opt-in mode: set PWF_HOOKS=on for a planned Codex session, or put "on",
-    "off", or "session" in .planning/.hooks_mode for a project-level default.
+    Resolution order (first match wins):
+      1. temporary-task suppression (`临时任务`) -> off for this session.
+      2. PWF_HOOKS env var: on/off.
+      3. .planning/.hooks_mode project file:
+           on      -> always on
+           off     -> always off
+           session -> strict per-session isolation (requires a `.attached`
+                      sentinel for this session_id)
+      4. DEFAULT -> on. This matches the official plugin's out-of-the-box
+         behaviour: whenever a plan resolves, inject it. Per-session binding
+         (`sessions/<id>.active_plan`) is then an *override* for parallel
+         isolation, not a gate — unbound sessions still get the project's
+         active/newest plan. Set `.hooks_mode = session` if you want the
+         strict "only explicitly-attached sessions get context" behaviour.
     """
     if is_temporarily_disabled(root, session_id):
         return False
@@ -305,12 +313,45 @@ def is_session_attached(root: Path, session_id: str | None) -> bool:
     if project_mode in {"session", "session_only", "attached"}:
         return _is_sentinel_attached(root, session_id)
 
-    sessions_dir = root / ".planning" / "sessions"
-    if not sessions_dir.exists():
-        return True  # legacy — no sessions dir means single-session setup
-    if not session_id:
-        return False  # sessions dir exists but caller has no ID — stay silent
-    return (sessions_dir / f"{session_id}.attached").exists()
+    return True  # default: official out-of-the-box behaviour
+
+
+def _newest_plan_dir_id(root: Path) -> str:
+    plan_root = root / ".planning"
+    if not plan_root.is_dir():
+        return ""
+    newest = ""
+    newest_mt = -1.0
+    for entry in plan_root.iterdir():
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        if not (entry / "task_plan.md").exists():
+            continue
+        try:
+            mt = entry.stat().st_mtime
+        except OSError:
+            continue
+        if mt > newest_mt:
+            newest_mt = mt
+            newest = entry.name
+    return newest
+
+
+def effective_plan_present(root: Path, session_id: str | None) -> bool:
+    """True if any plan would resolve for this session.
+
+    Mirrors resolve-plan-dir.sh + legacy fallback so the Python gate matches
+    what the shell renderers will actually emit:
+      session binding -> project .active_plan -> newest plan dir -> legacy
+      ./task_plan.md.
+    """
+    if session_active_plan_id(root, session_id):
+        return True
+    if project_active_plan_id(root):
+        return True
+    if _newest_plan_dir_id(root):
+        return True
+    return (root / "task_plan.md").exists()
 
 
 def emit_json(payload: dict[str, Any]) -> None:

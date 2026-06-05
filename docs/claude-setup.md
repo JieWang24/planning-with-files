@@ -1,242 +1,194 @@
-# planning-with-files · Claude Code 配置教程（本地定制版）
+# planning-with-files · Claude Code 配置教程（官方功能 + 本地定制）
 
-本分支（`claude`）是 [planning-with-files](https://github.com/OthmanAdi/planning-with-files) 技能针对 **Claude Code** 的移植版本，并在官方功能之上加入了本地定制逻辑。本文档保证你在**任意新机器**上都能按步骤完整复现这套配置，不出纰漏。
-
----
-
-## 1. 这是什么
-
-planning-with-files 让 AI 像 Manus 一样，把"工作记忆"持久化到磁盘上的 Markdown 文件里：
-
-| 文件 | 作用 |
-|------|------|
-| `task_plan.md` | 阶段（phases）、目标、决策、错误记录 |
-| `findings.md`  | 研究发现、技术决策 |
-| `progress.md`  | 会话日志、测试结果 |
-
-复杂任务（≥5 次工具调用 / 多步研究 / 工程搭建）开始前先建计划文件，之后通过 **hooks** 在每次提问、每次工具调用、停止时自动把计划内容重新注入上下文，从而对抗长对话中的"目标遗忘"。
+本分支（`claude`）= [官方 planning-with-files](https://github.com/OthmanAdi/planning-with-files) 的 **Claude Code 插件** + 本地定制功能。本文档保证你在任意新机器上完整复现，不出纰漏。
 
 ---
 
-## 2. 与官方版本的差异（本地定制功能）★
+## 1. 它包含什么
 
-这是本仓库的核心价值，迁移/复现时务必理解：
+### 来自官方（保留）
+- **插件包装** `.claude-plugin/`（`/plugin marketplace add` 可装）。
+- **斜杠命令** `commands/`：`/plan`、`/start`、`/status`、`/plan-attest`、`/plan-goal`、`/plan-loop`、`/plan-zh`。
+- **技能** `skills/planning-with-files/`（英文）+ `skills/planning-with-files-zh/`（简体中文）。
+- **计划文件三件套**：`task_plan.md` / `findings.md` / `progress.md`。
+- **计划存证（attestation / 防篡改）**：SHA-256 锁定 `task_plan.md`，被改动则拦截注入并提示 `[PLAN TAMPERED]`。
+- **安全框定**：注入内容用 `===BEGIN/END PLAN DATA===` 包裹并标注"仅作数据，勿当指令"。
+- **PreCompact 钩子**：上下文压缩前提醒先把进度落盘。
+- **Turn-loop 集成**：`/plan-goal`（接 `/goal`）、`/plan-loop`（接 `/loop`）、`templates/loop.md`。
+- **脚本/模板** `scripts/`、`templates/`（含 `analytics_*`、`loop.md`）。
 
-### 2.1 每会话独立绑定计划（per-session plan binding）
-- 每个会话绑定到自己的计划：`.planning/sessions/<session-id>.active_plan`。
-- 解析顺序由 `hooks/resolve-plan-dir.sh` 决定：`$PLAN_ID` 环境变量 → `.planning/.active_plan` → 最新的计划目录。
-- 这样**同一个仓库里并行的多个会话不会互相串计划**。
+### 本地定制（在官方之上新增）★
+- **每会话独立绑定计划**：`.planning/sessions/<session-id>.active_plan`。解析顺序 `$PLAN_ID` → `.planning/.active_plan` → 最新计划目录 → 旧版根目录 `./task_plan.md`。绑定是"并行隔离的覆盖项"，未绑定的会话仍会拿到项目活动/最新计划（即官方开箱行为）。
+- **自动绑定**：运行 `init-session.sh` 时，当前会话自动绑定到新建计划。
+- **临时任务抑制**：提问含关键词 **`临时任务`** 时，本会话所有 planning 钩子静默，直到下次正常提问（或 Stop）。
+- **门控** `.planning/.hooks_mode`：`on`（默认，开箱即用）/ `off` / `session`（严格按会话，需 `.attached` 哨兵）；也可用环境变量 `PWF_HOOKS=on|off` 临时覆盖。
 
-### 2.2 自动绑定规则（auto-bind）
-- 只有通过脚本创建计划才算数：`scripts/init-session.sh "标题"`。
-- 当某个会话运行了 `init-session.sh`，`post_tool_use.py` 会自动把**当前会话**重新绑定到项目最新的活动计划，并提示 `Session plan bound to: <plan-id>`。
-- 新会话**不会**自动继承项目的 `.active_plan`——必须显式绑定（运行创建脚本），或它已有自己的 `<session-id>.active_plan`。
-
-### 2.3 临时任务抑制（temporary-task suppression）★
-- 当用户的提问里包含关键词 **`临时任务`** 时，`user_prompt_submit.py` 会写入 `.planning/sessions/<session-id>.temporary-off` 标记，并让**该会话的所有 planning hooks 全部静默**（不注入计划、不在停止时拦截）。
-- 下一条**正常**提问会自动清除该标记，恢复计划上下文；`Stop` 时若仍处于临时模式也会清除标记且不拦截。
-- 用途：你只想让 AI 做一件一次性的小事，不希望它被当前的长计划"绑架"。
-- 关键词在 `hooks/planning_hook_adapter.py` 的 `TEMPORARY_TASK_KEYWORDS` 中定义，可自行增改。
-
-### 2.4 激活门控（attachment gating）
-`hooks/planning_hook_adapter.py::is_session_attached` 决定一个会话是否接收计划上下文，优先级：
-1. 临时任务标记存在 → **关闭**。
-2. 环境变量 `PWF_HOOKS`：`on`/`off`。
-3. 项目文件 `.planning/.hooks_mode`：
-   - `on` → 始终开启（与具体会话无关）★ 本地默认用这个
-   - `off` → 始终关闭
-   - `session` → 仅当存在 `.planning/sessions/<session-id>.attached` 哨兵时开启
-4. 兼容老项目：若没有 `.planning/sessions/` 目录 → 默认开启。
-
-### 2.5 Claude 输出契约适配（移植关键点）
-Codex 用 `{"systemMessage": ...}` 注入上下文；但在 Claude Code 里 `systemMessage` 只是给用户看的提示，**不会回灌给模型**。因此移植时改用 Claude 的 `hookSpecificOutput.additionalContext`（见 `planning_hook_adapter.py::emit_context`）。`Stop` 拦截仍用 `{"decision":"block","reason":...}`（两端一致）。
-
-### 2.6 codex-scholar KB 提醒（沿用）
-`hooks/post-tool-use.sh` 在每次 Bash 工具调用后附带一句 `[codex-scholar]` 提醒：KB 编辑应先把项目自有的想法/规格写进 `Designs/`。这是科研知识库工作流的约定，按需保留或删除。
+### 关键移植决策（为什么不照搬官方 frontmatter 钩子）★
+官方 Claude 插件把钩子写在 `SKILL.md` frontmatter；但存在 Claude Code 已知缺陷 [#17688](https://github.com/anthropics/claude-code/issues/17688)——**插件内的 frontmatter 钩子触发不稳定**。可靠机制是**静态插件钩子 `hooks/hooks.json`**。因此本分支：
+- 从两个 `SKILL.md` 去掉 `hooks:` frontmatter（避免不稳定 + 双触发）；
+- 用 `hooks/hooks.json` 注册全部钩子，调用 `hooks/*.py` 适配器；
+- 把官方 frontmatter 钩子里的特性（存证/防篡改、PreCompact、BEGIN/END 框定）**移植进适配器/shell 脚本**，与定制特性合一。
 
 ---
 
-## 3. 架构与文件布局
+## 2. 安装（两条路线，二选一，勿同时用，否则钩子双触发）
 
-### 仓库结构（本分支）
-```
-.
-├── README.md
-├── install.sh                       # 一键安装器（全局 + 项目注册）
-├── docs/claude-setup.md             # 本教程
-├── skills/planning-with-files/      # → 安装到 ~/.claude/skills/planning-with-files/
-│   ├── SKILL.md                     #   （已去掉 Codex 的 hooks: frontmatter）
-│   ├── scripts/                     #   init-session / resolve-plan-dir / set-active-plan / attest-plan / check-complete / session-catchup（含 .ps1）
-│   ├── templates/                   #   task_plan / findings / progress 模板
-│   └── references/                  #   reference.md / examples.md
-├── hooks/                           # → 安装到 ~/.claude/hooks/
-│   ├── planning_hook_adapter.py     #   共享逻辑（会话绑定、临时抑制、门控、emit_context）
-│   ├── session_start.py             #   SessionStart：跑 catchup + 注入计划
-│   ├── user_prompt_submit.py        #   UserPromptSubmit：临时任务检测 + 注入计划
-│   ├── pre_tool_use.py              #   PreToolUse：占位（仅识别建计划命令）
-│   ├── post_tool_use.py             #   PostToolUse：自动绑定 + 进度提醒
-│   ├── stop.py                      #   Stop：计划未完成则拦截续跑
-│   ├── permission_request.py        #   PermissionRequest：审批前提醒看计划
-│   └── *.sh                         #   渲染计划内容的 shell 脚本
-└── project-template/.claude/settings.json   # 每个项目的 hooks 注册模板
-```
+### 前置
+- Claude Code **v2.1.0+**（完整钩子支持）。
+- `python3` 在 PATH（钩子适配器是 Python，无第三方依赖）。
 
-### 运行时布局（安装后）
-| 位置 | 内容 |
-|------|------|
-| `~/.claude/skills/planning-with-files/` | 技能本体（模板/脚本/参考） |
-| `~/.claude/hooks/` | hook 适配器（全局，所有项目共用） |
-| `<项目>/.claude/settings.json` | 该项目的 hooks 注册（指向全局 hooks，带项目本地回退） |
-| `<项目>/.planning/` | 真正的计划数据：`.active_plan`、`.hooks_mode`、`sessions/`、`<plan-id>/` |
-
-> Claude Code 的 hooks 写在 `settings.json` 里（**不是**像 Codex 那样写在 SKILL.md 的 frontmatter）。
-
-### hook 注册命令的设计
-模板里的命令形如：
-```sh
-python3 .claude/hooks/<name>.py 2>/dev/null || python3 "$HOME/.claude/hooks/<name>.py" 2>/dev/null || true
-```
-先找**项目本地** `.claude/hooks/`，找不到再回退到**全局** `~/.claude/hooks/`。我们只装全局，所以走回退；但保留本地优先，便于个别项目覆盖。
-
----
-
-## 4. 前置要求
-
-- **Claude Code** 已安装并可用。
-- **python3** 在 PATH 中（hook 适配器是 Python，无第三方依赖）。
-- macOS / Linux 自带 `sh`、`git`。（仓库里也带了 `.ps1`，Windows 可用 PowerShell。）
-
----
-
-## 5. 安装步骤
-
-### 5.1 拉取仓库并切到 claude 分支
+### 路线 A：插件（推荐，最贴官方）★
+从本地克隆当作 marketplace 安装（不依赖默认分支，任何分支都行）：
 ```bash
 git clone git@github.com:JieWang24/planning-with-files.git
-cd planning-with-files
-git checkout claude
+cd planning-with-files && git checkout claude
 ```
+然后在 **Claude Code 会话里**执行：
+```
+/plugin marketplace add /绝对路径/到/planning-with-files
+/plugin install planning-with-files@planning-with-files
+```
+- Claude 全权管理；`${CLAUDE_PLUGIN_ROOT}` 自动注入，`hooks/hooks.json` 原生生效；命令与技能自动加载。
+- 更新：`git pull` 后 `/plugin update planning-with-files@planning-with-files`（或重新 add/ install）。
+- 卸载：`/plugin uninstall planning-with-files@planning-with-files`。
 
-### 5.2 全局安装（技能 + hooks）
+> 远程一键 `/plugin marketplace add JieWang24/planning-with-files` 会读**默认分支**。若想这样用，把 `claude` 设为默认分支，或合并到默认分支。否则用上面的"本地路径"方式最稳。
+
+### 路线 B：脚本全局安装（不走插件系统）
 ```bash
+git clone git@github.com:JieWang24/planning-with-files.git
+cd planning-with-files && git checkout claude
 ./install.sh
 ```
-这会把 `skills/planning-with-files` 复制到 `~/.claude/skills/`，把 `hooks/*` 复制到 `~/.claude/hooks/`，并设好可执行位。已存在的旧技能会自动备份为 `*.bak.<时间戳>`。
+装进 `~/.claude`：
+- `skills/planning-with-files/`（含内置 `hooks/`）+ `skills/planning-with-files-zh/`
+- `commands/*.md`（`/plan` 等）
+- `settings.json` 的 hooks（**从 `hooks/hooks.json` 派生**，把 `${CLAUDE_PLUGIN_ROOT}` 替换为已安装技能目录；可靠，非 frontmatter）
 
-### 5.3 为某个项目启用 planning hooks
-```bash
-# 全局安装 + 注册项目（默认写 .planning/.hooks_mode=on）
-./install.sh --project /path/to/your/project
-
-# 已经装过全局，只想再注册一个项目
-./install.sh --no-global --project /path/to/another/project
-
-# 一次注册多个
-./install.sh --project /path/A --project /path/B
-```
-`--mode` 控制门控写法：`on`（默认，始终开启）/ `session`（按会话哨兵）/ `off` / `skip`（只注册 hooks，不动 `.hooks_mode`）。
-
-> `install.sh` 的项目注册是**幂等**的，且会**合并**而非覆盖：它只会替换自己之前写入的 planning hook 条目，保留你 `settings.json` 里其它 hooks 和 `env` 等设置。
-
-### 5.4 首次进入项目：批准 hooks ★
-Claude Code 出于安全，会在检测到项目 `.claude/settings.json` 里有新的/变更的 hooks 时**弹出审批提示**。第一次在该项目启动会话时**接受这些 hooks** 即可，否则不会执行。
-
-### 手动注册（不想用 install.sh 时）
-把 `project-template/.claude/settings.json` 的 `hooks` 内容合并进 `<项目>/.claude/settings.json`，再执行：
-```bash
-mkdir -p <项目>/.planning && echo on > <项目>/.planning/.hooks_mode
-```
+特点：
+- **幂等 + 合并式**：重复运行不重复注册，保留你 `settings.json` 里其它 hooks 与 `env`。
+- `./install.sh --no-hooks`：只装技能+命令，不动 `settings.json`。
+- 全局生效（所有项目）；某项目不想要就设 `.planning/.hooks_mode=off` 或 `PWF_HOOKS=off`。
+- 装完**重启/新开会话**。路线 B 的钩子是**用户级**的，会在每个项目触发：无计划时静默，有计划时注入。
 
 ---
 
-## 6. 验证安装（smoke test）
+## 3. 验证安装
 
-在一个**临时目录**里跑一遍完整链路（不污染真实项目）：
+新开一个 Claude Code 会话：
+- 输入 `/plan`、`/status` 应能补全/执行。
+- 在含计划的项目里提问，应看到被注入的 `===BEGIN PLAN DATA===` 计划上下文。
+
+脚本层冒烟测试（临时目录，不污染真实项目）：
 ```bash
-T=/tmp/pwf-verify; rm -rf "$T"; mkdir -p "$T"; SID=verify-sid
-bash ~/.claude/skills/planning-with-files/scripts/init-session.sh "Verify" >/dev/null
-# 上一行在当前目录建计划；改到 $T 下执行：
+T=/tmp/pwf-verify; rm -rf "$T"; mkdir -p "$T"; SID=verify
+# 用安装后的脚本建计划
 ( cd "$T" && bash ~/.claude/skills/planning-with-files/scripts/init-session.sh "Verify" >/dev/null )
-echo on > "$T/.planning/.hooks_mode"
-
-# 自动绑定
-printf '{"session_id":"%s","cwd":"%s","tool_name":"Bash","tool_input":{"command":"init-session.sh x"}}' "$SID" "$T" \
-  | python3 ~/.claude/hooks/post_tool_use.py
-# 注入计划（应输出 hookSpecificOutput / additionalContext）
-printf '{"session_id":"%s","cwd":"%s","prompt":"go"}' "$SID" "$T" \
-  | python3 ~/.claude/hooks/user_prompt_submit.py | head -c 200; echo
-# 临时任务抑制（应无输出，且生成 temporary-off）
-printf '{"session_id":"%s","cwd":"%s","prompt":"临时任务：看个报错"}' "$SID" "$T" \
-  | python3 ~/.claude/hooks/user_prompt_submit.py
+H=~/.claude/skills/planning-with-files/hooks   # 路线 B；路线 A 在插件安装目录
+# 未绑定也应注入（官方开箱行为）
+printf '{"session_id":"%s","cwd":"%s","prompt":"go"}' "$SID" "$T" | python3 "$H/user_prompt_submit.py" | head -c 200; echo
+# 临时任务抑制（应无输出 + 生成标记）
+printf '{"session_id":"%s","cwd":"%s","prompt":"临时任务：x"}' "$SID" "$T" | python3 "$H/user_prompt_submit.py"
 ls "$T/.planning/sessions/$SID.temporary-off" && echo "temp-off OK"
-# Stop 拦截（计划未完成应返回 decision:block）
-printf '{"session_id":"%s","cwd":"%s","stop_hook_active":false}' "$SID" "$T" \
-  | python3 ~/.claude/hooks/stop.py
 rm -rf "$T"
 ```
-预期：自动绑定打印 `Session plan bound to: ...`；提问注入打印计划内容；临时任务无输出并生成 `temporary-off`；Stop 返回 `{"decision": "block", ...}`。
 
 ---
 
-## 7. 日常使用
+## 4. 命令参考
 
-- **建计划**：让 AI / 或自己运行
-  `~/.claude/skills/planning-with-files/scripts/init-session.sh "任务标题"`
-  会生成 `.planning/<日期>-<slug>/{task_plan,findings,progress}.md` 并把它设为活动计划。
-- **继续已有计划**：用解析器而不是直接读 `.active_plan`：
-  `PLAN_DIR="$(sh ~/.claude/hooks/resolve-plan-dir.sh)"`
-- **切换活动计划**：`scripts/set-active-plan.sh <plan-id>`（或 `export PLAN_ID=<plan-id>` 只钉住当前终端）。
-- **临时插队**：提问里带 `临时任务` 三个字，本轮不受计划约束。
-- **锁定计划防篡改**：`scripts/attest-plan.sh`（记录 SHA-256），`--show` / `--clear`。
-- **检查完成度**：`scripts/check-complete.sh .planning/<plan-id>/task_plan.md`。
+| 命令 | 作用 |
+|------|------|
+| `/plan` | 启动计划工作流，按需创建三件套 |
+| `/start` | 调用技能（`disable-model-invocation`，需你手动输入） |
+| `/status` | 一屏显示当前阶段/进度/错误 |
+| `/plan-attest` | 给当前 `task_plan.md` 计算 SHA-256 存证（防篡改） |
+| `/plan-goal` | 接 Claude `/goal`，以"全部阶段完成"为终止条件持续推进 |
+| `/plan-loop` | 接 Claude `/loop`，按周期重读计划、跑 check-complete、写进度 |
+| `/plan-zh` | 中文版计划命令 |
+
+> 注：`/plan-goal`、`/plan-loop` 带 `disable-model-invocation`，需你**手动输入**触发；个别版本可能拒触发，SKILL.md 内有等效手动步骤。
 
 ---
 
-## 8. 配置项参考
+## 5. 日常使用
+
+- **建计划**：`~/.claude/skills/planning-with-files/scripts/init-session.sh "标题"` → `.planning/<日期>-<slug>/`，并设为活动计划；当前会话自动绑定。
+- **继续已有计划**：用解析器而非直接读 `.active_plan`：
+  `PLAN_DIR="$(sh ~/.claude/skills/planning-with-files/hooks/resolve-plan-dir.sh)"`
+- **并行多任务**：每个终端 `export PLAN_ID=<plan-id>` 钉住各自计划；或 `set-active-plan.sh <plan-id>` 切换项目活动计划。
+- **临时插队**：提问带 `临时任务`，本轮不受计划约束。
+- **防篡改**：定稿后 `/plan-attest`（或 `scripts/attest-plan.sh`）；之后任何对 `task_plan.md` 的非法改动都会触发 `[PLAN TAMPERED]` 并拦截注入，直到重新存证。
+
+---
+
+## 6. 配置项参考
 
 | 开关 | 位置 | 取值 | 作用 |
 |------|------|------|------|
-| `.hooks_mode` | `<项目>/.planning/.hooks_mode` | `on` / `off` / `session` | 项目级门控默认值 |
-| `PWF_HOOKS` | 环境变量 | `on` / `off` | 临时覆盖门控（优先于 `.hooks_mode`） |
+| `.hooks_mode` | `<项目>/.planning/.hooks_mode` | `on`/`off`/`session` | 项目级门控默认值（默认 on） |
+| `PWF_HOOKS` | 环境变量 | `on`/`off` | 临时覆盖门控（优先于 `.hooks_mode`） |
 | `PLAN_ID` | 环境变量 | `<plan-id>` | 钉住当前终端/会话用哪个计划 |
-| `临时任务` | 提问文本 | 关键词 | 本会话静默 planning hooks 直到下次正常提问 |
+| `临时任务` | 提问文本 | 关键词 | 本会话静默 planning 钩子直到下次正常提问 |
 | 关键词集合 | `hooks/planning_hook_adapter.py` `TEMPORARY_TASK_KEYWORDS` | 元组 | 自定义触发抑制的关键词 |
 
 ---
 
-## 9. 故障排查
+## 7. 故障排查
 
-| 现象 | 原因 / 处理 |
-|------|------------|
-| 提问/启动时没有注入计划 | ① 没批准 hooks（重进项目接受）；② 该会话未绑定计划——跑一次 `init-session.sh`；③ `.hooks_mode` 是 `off`；④ 处于临时任务模式（发一条正常提问清除）。 |
-| Stop 时一直被拦着续跑 | 这是设计：计划未完成会拦截。把 `task_plan.md` 里阶段状态改成 `complete`，或发 `临时任务`，或把 `.hooks_mode` 设 `off`。 |
-| `python3: command not found` | hooks 静默失败（命令末尾有 `|| true`，不会阻断会话），但功能不生效——装好 python3。 |
-| 多个会话串计划 | 确认 `.planning/sessions/<session-id>.active_plan` 各自存在；新会话需各自绑定。 |
-| 改了 hooks 不生效 | hooks 在会话开始时加载；新开会话或重进项目。 |
-| 想全局关闭 | `export PWF_HOOKS=off`，或把项目 `.hooks_mode` 设 `off`。 |
+| 现象 | 处理 |
+|------|------|
+| 命令不补全 / 钩子不触发 | 路线 A：确认 `/plugin install` 成功；路线 B：确认 `install.sh` 跑完并**新开会话**。检查 Claude Code ≥ v2.1.0。 |
+| 钩子重复注入 | 你可能同时用了路线 A 和 B。只保留一个：卸载插件或从 `~/.claude/settings.json` 删除 planning 条目。 |
+| `[PLAN TAMPERED]` 一直出现 | `task_plan.md` 与存证不符。`/plan-attest` 重新批准，或从 git 恢复文件。 |
+| Stop 时一直被拦着续跑 | 计划未完成会拦截。把阶段状态改 `complete`，或发 `临时任务`，或 `.hooks_mode=off`。 |
+| `python3 not found` | 钩子静默失败（命令带 `|| true` 不阻断会话）但功能失效——装 python3。 |
+| 想全局关闭 | `export PWF_HOOKS=off` 或项目 `.hooks_mode=off`。 |
 
 ---
 
-## 10. 卸载
+## 8. 卸载
 
-```bash
-rm -rf ~/.claude/skills/planning-with-files
-rm -f  ~/.claude/hooks/{planning_hook_adapter,session_start,user_prompt_submit,pre_tool_use,post_tool_use,stop,permission_request}.py
-rm -f  ~/.claude/hooks/{session-start,user-prompt-submit,post-tool-use,pre-tool-use,stop,resolve-plan-dir}.sh
-# 再从各项目的 .claude/settings.json 删除 planning 相关 hooks 条目即可
+- 路线 A：`/plugin uninstall planning-with-files@planning-with-files`
+- 路线 B：
+  ```bash
+  rm -rf ~/.claude/skills/planning-with-files ~/.claude/skills/planning-with-files-zh
+  for c in plan start status plan-attest plan-goal plan-loop plan-zh; do rm -f ~/.claude/commands/$c.md; done
+  # 再从 ~/.claude/settings.json 删除 command 含 "planning-with-files" 的 hooks 条目
+  ```
+
+---
+
+## 9. 仓库结构（claude 分支）
+
+```
+.claude-plugin/        plugin.json + marketplace.json（插件清单，已标记 fork）
+commands/              /plan /start /status /plan-attest /plan-goal /plan-loop /plan-zh
+hooks/                 ★ 可靠钩子层（替代 frontmatter）
+  hooks.json           静态插件钩子（${CLAUDE_PLUGIN_ROOT} 引用脚本）
+  planning_hook_adapter.py   共享逻辑：会话绑定/临时抑制/门控/emit_context/effective_plan
+  session_start.py user_prompt_submit.py pre_tool_use.py post_tool_use.py
+  stop.py pre_compact.py permission_request.py
+  *.sh                 渲染脚本：BEGIN/END 框定 + 防篡改 + 解析计划目录
+skills/
+  planning-with-files/      官方英文技能（已去 frontmatter hooks，加"本地定制"小节）
+  planning-with-files-zh/   官方简中技能（同上）
+scripts/ templates/    官方根级脚本与模板
+install.sh             路线 B 全局安装器（幂等、合并式）
+docs/claude-setup.md   本教程
 ```
 
 ---
 
-## 11. 与 Codex 版本的关系
+## 10. 与 Codex 版的关系
 
-本地同时维护 Codex 版（`~/.codex/skills/planning-with-files` + `~/.codex/hooks/`，在各项目 `.codex/hooks.json` 注册）和 Claude 版。两者**业务逻辑共享**，仅"输入解析 + 输出契约"不同：
+本地同时维护 Codex 版（`~/.codex/...`，项目 `.codex/hooks.json` 注册）与 Claude 版。业务逻辑共享，差异在输入解析/输出契约：
 
-| 维度 | Codex | Claude Code |
-|------|-------|-------------|
-| hooks 注册 | 项目 `.codex/hooks.json` | 项目 `.claude/settings.json` |
+| 维度 | Codex | Claude（本分支） |
+|------|-------|------------------|
+| 钩子注册 | 项目 `.codex/hooks.json` | 插件 `hooks/hooks.json`（或 `~/.claude/settings.json`） |
 | 注入上下文 | `{"systemMessage": ...}` | `hookSpecificOutput.additionalContext` |
 | Stop 拦截 | `{"decision":"block"}` | `{"decision":"block"}`（一致） |
 | 会话 ID | 从 transcript 路径解析 | payload 直接给 `session_id` |
 
-**改一端逻辑时记得同步另一端**，保持行为一致。
+**改一端逻辑请同步另一端**，保持行为一致。

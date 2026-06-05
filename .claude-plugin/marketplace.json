@@ -1,0 +1,15 @@
+{
+  "name": "planning-with-files",
+  "owner": {
+    "name": "Ahmad Othman Ammar Adi",
+    "url": "https://github.com/OthmanAdi"
+  },
+  "plugins": [
+    {
+      "name": "planning-with-files",
+      "source": "./",
+      "description": "Claude Code fork: reliable hooks via hooks/hooks.json + local customizations (per-session binding, 临时任务 suppression, .hooks_mode gating) on top of the official skill, commands, attestation, and PreCompact.",
+      "version": "2.43.0-claude.1"
+    }
+  ]
+}

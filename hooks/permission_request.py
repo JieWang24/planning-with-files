@@ -18,12 +18,7 @@ def main() -> None:
     if not adapter.is_session_attached(root, session_id):
         return
 
-    plan_id = adapter.ensure_session_plan(root, session_id)
-    if not plan_id:
-        return
-
-    plan = root / ".planning" / plan_id / "task_plan.md"
-    if not plan.exists():
+    if not adapter.effective_plan_present(root, session_id):
         return
 
     adapter.emit_json({

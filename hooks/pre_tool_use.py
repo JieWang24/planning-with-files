@@ -12,8 +12,13 @@ def main() -> None:
     if not adapter.is_session_attached(root, session_id):
         return
 
-    if not adapter.is_plan_creation_command(payload):
+    if not adapter.effective_plan_present(root, session_id):
         return
+
+    # Light reminder before a Bash command that may change project state.
+    stdout, _ = adapter.run_shell_script("pre-tool-use.sh", root, session_id)
+    if stdout:
+        adapter.emit_context("PreToolUse", stdout)
 
 
 if __name__ == "__main__":
