@@ -1,5 +1,6 @@
 {
   "name": "planning-with-files",
+  "description": "Claude Code fork of planning-with-files: reliable hooks via hooks/hooks.json plus local customizations (per-session binding, 临时任务 suppression, .hooks_mode gating) on top of the official skill, commands, attestation, and PreCompact.",
   "owner": {
     "name": "Ahmad Othman Ammar Adi",
     "url": "https://github.com/OthmanAdi"
