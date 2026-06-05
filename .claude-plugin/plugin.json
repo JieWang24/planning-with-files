@@ -1,6 +1,6 @@
 {
   "name": "planning-with-files",
-  "version": "2.43.0-claude.1",
+  "version": "2.43.0-claude.2",
   "description": "Claude Code fork of planning-with-files (Manus-style persistent planning files). Hooks run from hooks/hooks.json (reliable, avoids skill-frontmatter bug #17688) and add local customizations: per-session plan binding, auto-bind on init-session, 临时任务 suppression, and .hooks_mode gating — on top of the official attestation, PreCompact, and security framing.",
   "author": {
     "name": "OthmanAdi (fork maintained by JieWang24, branch: claude)",

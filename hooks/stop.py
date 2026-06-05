@@ -16,7 +16,7 @@ def main() -> None:
     if not adapter.is_session_attached(root, session_id):
         return
 
-    if not adapter.ensure_session_plan(root, session_id):
+    if not adapter.effective_plan_present(root, session_id):
         return
 
     stdout, _ = adapter.run_shell_script("stop.sh", root, session_id)
