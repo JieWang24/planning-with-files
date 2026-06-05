@@ -1,0 +1,68 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "startup|resume|clear",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/session_start.py 2>/dev/null || python3 \"$HOME/.claude/hooks/session_start.py\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/user_prompt_submit.py 2>/dev/null || python3 \"$HOME/.claude/hooks/user_prompt_submit.py\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/pre_tool_use.py 2>/dev/null || python3 \"$HOME/.claude/hooks/pre_tool_use.py\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/post_tool_use.py 2>/dev/null || python3 \"$HOME/.claude/hooks/post_tool_use.py\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/stop.py 2>/dev/null || python3 \"$HOME/.claude/hooks/stop.py\" 2>/dev/null || true",
+            "timeout": 30
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/permission_request.py 2>/dev/null || python3 \"$HOME/.claude/hooks/permission_request.py\" 2>/dev/null || true"
+          }
+        ]
+      }
+    ]
+  }
+}
