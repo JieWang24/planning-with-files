@@ -24,7 +24,7 @@ def main() -> None:
     stdout, stderr = adapter.run_shell_script("user-prompt-submit.sh", root, session_id)
     message = "\n".join(part for part in (stdout, stderr) if part)
     if message:
-        adapter.emit_json({"systemMessage": message})
+        adapter.emit_user_prompt_context(message)
 
 
 if __name__ == "__main__":

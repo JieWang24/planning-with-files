@@ -14,8 +14,20 @@ def main() -> None:
 
     if adapter.is_plan_creation_command(payload):
         before_id = adapter.session_active_plan_id(root, session_id)
-        plan_id = adapter.rebind_session_to_project_active(root, session_id)
-        if plan_id and plan_id != before_id:
+        plan_id = adapter.rebind_session_if_project_active_changed(root, session_id)
+        if not plan_id:
+            active_id = adapter.project_active_plan_id(root)
+            if active_id and not session_id:
+                adapter.emit_json(
+                    {
+                        "systemMessage": (
+                            "[planning-with-files] Plan created, but no stable Codex session id was available; "
+                            "session plan binding was skipped."
+                        )
+                    }
+                )
+            return
+        if plan_id != before_id:
             adapter.emit_json({"systemMessage": f"[planning-with-files] Session plan bound to: {plan_id}"})
         return
 

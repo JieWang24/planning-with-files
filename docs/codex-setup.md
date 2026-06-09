@@ -60,11 +60,11 @@ Use one command during install:
 
 ## Modes
 
-Use `on` for normal behavior. In this mode, hooks are active, but new sessions still do not bind to a plan until a plan is created by the script.
+Use `on` for normal behavior. In this mode, hooks are active, but context is rendered only after the session has its own `.planning/sessions/<session-id>.active_plan`.
 
 Use `off` when a project should not run planning hooks.
 
-Use `session` only when you intentionally create `.planning/sessions/<session-id>.attached` files. In `session` mode, the script-first binding path will not run until the session is attached.
+Use `session` only for manual opt-in experiments. `init-session.sh --plan-dir` writes both `<session-id>.active_plan` and `<session-id>.attached` when a stable session id is available, so a newly created task can attach itself. If no stable session id is available, `session` mode stays silent.
 
 ## Creating A New Plan
 
@@ -87,13 +87,16 @@ The script creates:
 
 It also prints `PLAN_ID=<plan-id>`. Immediately after creation, use that id and work only inside `.planning/<PLAN_ID>/`.
 
-After the Bash tool call finishes, `PostToolUse` sees `init-session.sh` in the command text and binds the current Codex session to the current project active plan:
+When `CODEX_THREAD_ID` or `PWF_SESSION_ID` is available, the script immediately binds the current Codex session:
 
 ```text
 .planning/sessions/<stable-session-id>.active_plan
+.planning/sessions/<stable-session-id>.attached
 ```
 
-The stable session id is parsed from the Codex transcript path when available. This avoids using turn-level ids as durable planning sessions.
+After the Bash tool call finishes, `PostToolUse` sees `init-session.sh` in the command text and validates or backfills the same binding. It does not report success if no stable session id exists.
+
+The stable session id is resolved from `PWF_SESSION_ID`, `CODEX_THREAD_ID`, transcript UUID, and other stable conversation/session fields. `turn_id` is ignored by default because Codex can produce multiple turn ids inside one conversation; set `PWF_ALLOW_TURN_ID_SESSION=1` only for legacy debugging.
 
 ## Reading The Current Plan
 
@@ -151,12 +154,17 @@ If no session plan exists, it stays silent.
 
 ### PreToolUse
 
-Registered only for Bash. It checks whether the command text contains:
+Registered only for Bash.
 
-```text
-init-session.sh
-init-session.ps1
+For `init-session.sh` / `init-session.ps1`, it records the previous project active plan so `PostToolUse` can confirm whether a new plan was created.
+
+It also blocks bare resolver calls such as:
+
+```bash
+sh ~/.codex/hooks/resolve-plan-dir.sh
 ```
+
+unless the command explicitly sets `PLAN_ID` or `PWF_ALLOW_BARE_RESOLVE=1`.
 
 It does not print normal planning reminders.
 
@@ -164,12 +172,13 @@ It does not print normal planning reminders.
 
 Registered only for Bash.
 
-If the command contains `init-session.sh` or `init-session.ps1`, it binds the current session to `.planning/.active_plan` after the script completes.
+If the command contains `init-session.sh` or `init-session.ps1`, it validates or backfills the current session binding after the script completes.
 
 If the command is not a plan-creation command and a session plan exists, it prints:
 
 ```text
-[planning-with-files] Update progress.md with what you just did. If a phase is now complete, update task_plan.md status.
+[planning-with-files] Session plan: <plan-dir>
+[planning-with-files] Update <plan-dir>/progress.md with what you just did. If a phase is now complete, update <plan-dir>/task_plan.md status.
 ```
 
 If no session plan exists, it stays silent.
@@ -235,6 +244,12 @@ Check mode:
 python3 ~/.codex/tools/planning-hooks-mode.py status /path/to/project
 ```
 
+Run the empty-project session-binding smoke test:
+
+```bash
+~/.codex/tools/smoke-test-codex-session-binding.sh
+```
+
 Create a smoke plan:
 
 ```bash
@@ -279,11 +294,11 @@ or continue in a session that already has `.planning/sessions/<session-id>.activ
 
 ### There are old session plan files with unexpected ids
 
-Older versions could create session files from turn-level ids. They are historical leftovers. Current hook context prefers the stable session id parsed from the Codex transcript path.
+Older versions could create session files from turn-level ids. They are historical leftovers. Current hook context prefers stable ids from `PWF_SESSION_ID`, `CODEX_THREAD_ID`, transcript UUID, and other conversation/session fields. `turn_id` is ignored unless `PWF_ALLOW_TURN_ID_SESSION=1` is set.
 
 ### The agent reads `.planning/.active_plan` or bare `resolve-plan-dir.sh` manually
 
-The hook path does not do this once session binding exists, but an agent can still manually read that file or run the resolver without `PLAN_ID`. Project instructions should say:
+The hook path does not do this once session binding exists. `PreToolUse` blocks a known bare resolver Bash call while planning hooks are active, but an agent can still manually read `.planning/.active_plan` or inspect another directory. Project instructions should say:
 
 ```text
 Use the hook-injected canonical plan files for this session. Do not read .planning/.active_plan, another .planning/<dir>/, or run resolve-plan-dir.sh bare as a session resolver.

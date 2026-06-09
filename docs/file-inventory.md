@@ -50,8 +50,8 @@ Important files:
 | `planning_hook_adapter.py` | Shared Codex payload parser, mode gate, session-plan resolver, and shell runner. |
 | `session_start.py` | Codex `SessionStart` adapter. |
 | `user_prompt_submit.py` | Codex `UserPromptSubmit` adapter. |
-| `pre_tool_use.py` | Codex `PreToolUse` adapter, currently plan-creation detection only. |
-| `post_tool_use.py` | Codex `PostToolUse` adapter, binds sessions after `init-session` and reminds after normal Bash. |
+| `pre_tool_use.py` | Codex `PreToolUse` adapter. Records plan-creation state and blocks bare resolver calls without `PLAN_ID`. |
+| `post_tool_use.py` | Codex `PostToolUse` adapter. Validates/backfills `init-session` binding and reminds after normal Bash. |
 | `stop.py` | Codex `Stop` adapter. |
 | `permission_request.py` | Codex `PermissionRequest` adapter. |
 | `resolve-plan-dir.sh` | Shell resolver used by hook renderers. |
@@ -78,6 +78,7 @@ tools/
 | --- | --- |
 | `register-planning-hooks.py` | Writes project-level `.codex/hooks.json` and initializes `.planning/.hooks_mode` to `on` when missing. |
 | `planning-hooks-mode.py` | Reads or sets `.planning/.hooks_mode`. |
+| `smoke-test-codex-session-binding.sh` | Empty-project smoke test for stable Codex session-plan binding. |
 
 ## Project State
 
@@ -99,6 +100,7 @@ These files are generated in each project and are not stored in this repository:
 .planning/.active_plan
 .planning/<plan-id>/
 .planning/sessions/<session-id>.active_plan
+.planning/sessions/<session-id>.attached
 .planning/sessions/<session-id>.temporary-off
 ```
 

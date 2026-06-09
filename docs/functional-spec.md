@@ -58,6 +58,7 @@ Binding a Codex session creates:
 
 ```text
 <project>/.planning/sessions/<session-id>.active_plan
+<project>/.planning/sessions/<session-id>.attached
 ```
 
 Temporary task suppression creates and later clears:
@@ -83,7 +84,7 @@ New planning tasks are script-first. A new task must be created by:
 or on PowerShell:
 
 ```powershell
-~/.codex/skills/planning-with-files/scripts/init-session.ps1 "Task Title"
+~/.codex/skills/planning-with-files/scripts/init-session.ps1 -PlanDir "Task Title"
 ```
 
 Do not manually create `.planning/<plan-id>/` for a new task.
@@ -91,6 +92,8 @@ Do not manually create `.planning/<plan-id>/` for a new task.
 Hooks use the session plan, not the project active plan, as the current context source.
 
 `.planning/.active_plan` is only a project-level pointer. It is used by `PostToolUse` immediately after `init-session` finishes, so the current session can be bound to the new plan.
+
+`init-session.sh --plan-dir` is the primary binding point. When `PWF_SESSION_ID`, `CODEX_THREAD_ID`, or another stable session id is available in the process environment, the script writes the session binding immediately. `PostToolUse` is a safety net that validates or backfills the same binding after the Bash tool call.
 
 After binding, hook context comes from:
 
@@ -221,7 +224,7 @@ Supported modes:
 | --- | --- |
 | `on` | Planning hook adapters are allowed to run. A session still needs a session plan before context is rendered. |
 | `off` | Planning hook adapters stay silent for the project. |
-| `session` | Hook adapters run only when `.planning/sessions/<session-id>.attached` exists. |
+| `session` | Hook adapters run only when `.planning/sessions/<session-id>.attached` exists. `init-session.sh --plan-dir` creates that sentinel when a stable session id is available. |
 
 The environment variable `PWF_HOOKS` overrides the project file:
 
@@ -242,14 +245,16 @@ New registrations create `.hooks_mode=on`, so normal migrated projects do not re
 
 The shared adapter resolves a session id in this order:
 
-1. Parse the last UUID from the `transcript_path` filename.
-2. Use `thread_id`.
-3. Use `conversation_id`.
-4. Use `session_id`.
-5. Use `turn_id`.
-6. Use `PWF_SESSION_ID`.
+1. `PWF_SESSION_ID`.
+2. `CODEX_THREAD_ID`.
+3. `CODEX_CONVERSATION_ID`.
+4. `CODEX_SESSION_ID`.
+5. Parse the last UUID from the `transcript_path` filename.
+6. Stable payload fields: `thread_id`, `threadId`, `conversation_id`, `conversationId`, `session_id`, `sessionId`, `codex_thread_id`, `codexThreadId`.
 
-The transcript UUID is preferred because it is stable for a Codex session. Turn-level ids are avoided when the transcript path is available.
+Values are normalized to a UUID when one is embedded in the string. Otherwise only safe filename tokens are accepted.
+
+`turn_id` / `turnId` is ignored by default because Codex can create multiple turn ids within one conversation, which previously caused duplicate session-plan files. It is used only when `PWF_ALLOW_TURN_ID_SESSION=1` is explicitly set.
 
 ## Plan Creation Flow
 
@@ -268,7 +273,9 @@ The script:
 5. Creates `.planning/<plan-id>/`.
 6. Writes `task_plan.md`, `findings.md`, and `progress.md`.
 7. Updates `.planning/.active_plan` with the new plan id.
-8. Prints the plan id and a terminal `PLAN_ID` hint.
+8. If a stable session id exists in the environment, writes `.planning/sessions/<session-id>.active_plan`.
+9. If a stable session id exists, writes `.planning/sessions/<session-id>.attached`.
+10. Prints the plan id, the session binding path when bound, and a terminal `PLAN_ID` hint.
 
 After the Bash command completes, Codex runs `PostToolUse`.
 
@@ -281,16 +288,17 @@ init-session.ps1
 
 If it does, the adapter:
 
-1. Reads `.planning/.active_plan`.
-2. Verifies `.planning/<plan-id>/task_plan.md` exists.
-3. Writes `.planning/sessions/<session-id>.active_plan`.
-4. Emits:
+1. Checks whether the script already bound the current session.
+2. If not, reads `.planning/.active_plan`.
+3. Verifies `.planning/<plan-id>/task_plan.md` exists.
+4. Writes `.planning/sessions/<session-id>.active_plan` and `.planning/sessions/<session-id>.attached` only when a stable session id exists.
+5. Emits:
 
 ```text
 [planning-with-files] Session plan bound to: <plan-id>
 ```
 
-This is the only automatic binding path for new tasks.
+If no stable session id exists, `PostToolUse` does not create a session file and does not report a successful binding.
 
 ## Session Plan Resolution
 
@@ -353,7 +361,7 @@ Flow:
 4. Check mode gate.
 5. Require an existing session plan.
 6. Run `user-prompt-submit.sh`.
-7. Emit plan context as `systemMessage`.
+7. Emit plan context as both `systemMessage` and `hookSpecificOutput.additionalContext`.
 
 Rendered context includes:
 
@@ -375,10 +383,11 @@ Flow:
 
 1. Load payload.
 2. Check mode gate.
-3. Return unless the Bash command contains `init-session.sh` or `init-session.ps1`.
-4. Emit no normal reminder output.
+3. Block bare `resolve-plan-dir.sh` / `resolve-plan-dir.ps1` calls unless `PLAN_ID` or `PWF_ALLOW_BARE_RESOLVE=1` is present in the command text.
+4. If the Bash command contains `init-session.sh` or `init-session.ps1`, record the pre-tool `.planning/.active_plan` value.
+5. Emit no normal reminder output.
 
-This hook is intentionally quiet. It exists so the creation flow can be detected consistently around Bash commands without dumping full planning files before every command.
+This hook is intentionally quiet for ordinary Bash commands. It exists to make the creation flow detectable without dumping full planning files before every command, and to block the known unsafe bare resolver path.
 
 The shell renderer `pre-tool-use.sh` still contains the short reminder form:
 
@@ -398,8 +407,8 @@ Matcher: `Bash`.
 Flow for plan creation:
 
 1. Check mode gate.
-2. If command contains `init-session.sh` or `init-session.ps1`, bind this session to `.planning/.active_plan`.
-3. Emit a session binding message if the plan changed.
+2. If command contains `init-session.sh` or `init-session.ps1`, validate or backfill this session's binding to `.planning/.active_plan`.
+3. Emit a session binding message only when a stable session id exists and the session plan changed.
 
 Flow for ordinary Bash:
 
@@ -411,7 +420,8 @@ Flow for ordinary Bash:
 Reminder:
 
 ```text
-[planning-with-files] Update progress.md with what you just did. If a phase is now complete, update task_plan.md status.
+[planning-with-files] Session plan: <plan-dir>
+[planning-with-files] Update <plan-dir>/progress.md with what you just did. If a phase is now complete, update <plan-dir>/task_plan.md status.
 [codex-scholar] For KB edits, route project-owned ideas/specs to Designs/ before Experiments/, Results/, or paper claims.
 ```
 
@@ -510,7 +520,7 @@ When session A asks questions, hooks read session A's plan.
 
 When session B asks questions, hooks read session B's plan.
 
-If `.planning/.active_plan` later changes, existing session bindings do not change unless that same session runs `init-session` and triggers `PostToolUse` binding.
+If `.planning/.active_plan` later changes, existing session bindings do not change unless that same session runs `init-session.sh --plan-dir` again and creates or validates a new binding.
 
 ## Existing Task Continuation
 
@@ -553,11 +563,13 @@ A migrated machine is equivalent when all of these are true:
 4. `~/.codex/tools/planning-hooks-mode.py` matches `tools/planning-hooks-mode.py`.
 5. A fresh registered project gets `.planning/.hooks_mode=on`.
 6. A fresh registered project's `.codex/hooks.json` matches `hooks/hooks.json`.
-7. Running `init-session.sh --plan-dir "Smoke Test"` creates `.planning/<plan-id>/`.
-8. Simulated `PostToolUse` for that Bash command writes `.planning/sessions/<session-id>.active_plan`.
-9. Simulated `UserPromptSubmit` with that session id emits the session plan context plus canonical file paths and anti cross-plan-read warning.
-10. Bare `resolve-plan-dir.sh` may return the project default, while `PLAN_ID=<session-plan-id> resolve-plan-dir.sh` returns the session plan.
-11. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
+7. Running `CODEX_THREAD_ID=<sid> init-session.sh --plan-dir "Smoke Test"` creates `.planning/<plan-id>/`.
+8. That same command immediately writes `.planning/sessions/<sid>.active_plan` and `.planning/sessions/<sid>.attached`.
+9. Simulated `PostToolUse` with conflicting `turn_id` does not create `.planning/sessions/<turn-id>.active_plan`.
+10. Simulated `UserPromptSubmit` with that session id emits the session plan context plus canonical file paths and anti cross-plan-read warning through `hookSpecificOutput.additionalContext`.
+11. Simulated no-id `PostToolUse` does not report a false successful session binding.
+12. Bare `resolve-plan-dir.sh` is blocked by `PreToolUse` unless `PLAN_ID` is explicit.
+13. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
 
 ## Verification Checklist
 
@@ -594,37 +606,17 @@ diff -q ~/.codex/tools/register-planning-hooks.py tools/register-planning-hooks.
 diff -q ~/.codex/tools/planning-hooks-mode.py tools/planning-hooks-mode.py
 ```
 
-Smoke test with a temporary Codex home:
+Empty-project session-binding smoke test:
 
 ```bash
-tmp_home="$(mktemp -d)"
-tmp_project="$(mktemp -d)"
-sid="019e6fff-2222-7333-8444-abcdefabcdef"
-
-CODEX_HOME="$tmp_home" ./install.sh --register "$tmp_project"
-cd "$tmp_project"
-"$tmp_home/skills/planning-with-files/scripts/init-session.sh" --plan-dir "Default Mode Smoke Test"
-
-printf '{"cwd":"%s","transcript_path":"/tmp/rollout-%s.jsonl","tool_name":"Bash","tool_input":{"cmd":"%s/skills/planning-with-files/scripts/init-session.sh --plan-dir Default Mode Smoke Test"}}\n' \
-  "$tmp_project" "$sid" "$tmp_home" |
-  python3 "$tmp_home/hooks/post_tool_use.py"
-
-cat "$tmp_project/.planning/.hooks_mode"
-cat "$tmp_project/.planning/sessions/$sid.active_plan"
-```
-
-Expected:
-
-```text
-on
-2026-...-default-mode-smoke-test
+tools/smoke-test-codex-session-binding.sh
 ```
 
 ## Known Boundaries
 
-The hook system cannot force an agent to avoid manual reads if it opens `.planning/.active_plan` or runs `resolve-plan-dir.sh` bare. Project instructions should explicitly say to use hook-injected canonical files or the `PLAN_ID` printed by `init-session.sh --plan-dir`.
+The hook system cannot stop every possible manual read. It blocks known bare resolver Bash calls while planning hooks are active, but an agent can still open `.planning/.active_plan` or another plan directory directly. Project instructions should explicitly say to use hook-injected canonical files or the `PLAN_ID` printed by `init-session.sh --plan-dir`.
 
-`PreToolUse` is intentionally quiet for normal Bash commands. The active reminder is currently emitted by `PostToolUse` after Bash when a session plan exists.
+`PreToolUse` is intentionally quiet for normal Bash commands. It records plan-creation state and blocks known unsafe resolver calls. The active reminder is emitted by `PostToolUse` after Bash when a session plan exists.
 
 `session` mode is a manual opt-in mode. It is not the normal default and requires `.planning/sessions/<session-id>.attached`.
 

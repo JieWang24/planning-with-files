@@ -4,7 +4,7 @@ description: Implements Manus-style file-based planning to organize and track pr
 user-invocable: true
 allowed-tools: "Read Write Edit Bash Glob Grep"
 metadata:
-  version: "2.43.0-codex.3"
+  version: "2.44.0-codex.0"
 
 ---
 
@@ -12,7 +12,7 @@ metadata:
 
 Work like Manus: Use persistent markdown files as your "working memory on disk."
 
-## FIRST: Restore This Session's Context (v2.43.0-codex.3)
+## FIRST: Restore This Session's Context (v2.44.0-codex.0)
 
 **Before doing anything else**, use THIS session's canonical plan files. The planning hooks inject their exact paths at SessionStart and on each prompt:
 
@@ -61,8 +61,8 @@ If catchup report shows unsynced context:
 
 Before ANY complex task:
 
-1. **Create the plan directory** — Run `~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"` from the project root. This creates `.planning/<id>/{task_plan.md,findings.md,progress.md}`, prints `PLAN_ID=<id>`, and lets the Codex `PostToolUse` hook bind this session to it.
-2. **Use the printed `PLAN_ID`** — Work only inside `.planning/<PLAN_ID>/` immediately after creation. Do NOT run `resolve-plan-dir.sh` yourself; plain shell has no `PLAN_ID` and can fall back to the wrong `.active_plan`. On later turns, use the hook-injected canonical paths.
+1. **Create the plan directory** — Run `~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"` from the project root. This creates `.planning/<id>/{task_plan.md,findings.md,progress.md}`, prints `PLAN_ID=<id>`, updates `.planning/.active_plan`, and atomically binds the current Codex session when `CODEX_THREAD_ID` or `PWF_SESSION_ID` is available.
+2. **Use the printed `PLAN_ID`** — Work only inside `.planning/<PLAN_ID>/` immediately after creation. Do NOT run `resolve-plan-dir.sh` yourself; plain shell has no hook-injected `PLAN_ID` and can fall back to the wrong `.active_plan`. On later turns, use the hook-injected canonical paths.
 3. **Re-read plan before decisions** — Refreshes goals in attention window.
 4. **Update after each phase** — Mark complete, log errors.
 
@@ -76,9 +76,11 @@ New planning tasks MUST be created through the bundled initialization script:
 ~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"
 ```
 
-Do not manually create `.planning/<plan-id>/`, `task_plan.md`, `findings.md`, or `progress.md` for a new task. The script is the canonical creation boundary: it creates the files, records `.planning/.active_plan`, and gives project hooks one precise moment to bind the current Codex session to the new plan.
+Do not manually create `.planning/<plan-id>/`, `task_plan.md`, `findings.md`, or `progress.md` for a new task. The script is the canonical creation boundary: it creates the files, records `.planning/.active_plan`, writes `.planning/sessions/<session-id>.active_plan` when a stable Codex session id is available, and leaves `PostToolUse` as a safety net.
 
-New Codex sessions do not automatically bind themselves to the project `.planning/.active_plan`. A session receives planning context only after it has been explicitly bound by running the creation script above, or when an existing `.planning/sessions/<session-id>.active_plan` already exists for that session.
+New Codex sessions do not treat the project `.planning/.active_plan` as current context. A session receives planning context only after it has a session binding created by the script above, or when an existing `.planning/sessions/<session-id>.active_plan` already exists for that session.
+
+The stable session id is resolved from `PWF_SESSION_ID`, `CODEX_THREAD_ID`, transcript UUID, or other stable conversation/session fields. `turn_id` is ignored by default because Codex can create multiple turn ids inside one conversation.
 
 When continuing an existing task, use the canonical file paths injected by the hooks. Do not manually run `resolve-plan-dir.sh` in a normal Bash command as a session resolver; without hook-injected `PLAN_ID`, it can read the project default instead of this session's plan.
 
@@ -218,8 +220,10 @@ Helper scripts for automation:
 
 - **Project-level hooks** — Runtime hooks are registered through project `.codex/hooks.json`, not this `SKILL.md` frontmatter.
 - **Per-session plan binding** — Each Codex session can bind to its own `.planning/sessions/<session-id>.active_plan`. Hook context reads that session plan and injects canonical plan file paths.
+- **Atomic init-session binding** — `init-session.sh --plan-dir` writes the session plan immediately when `CODEX_THREAD_ID` or `PWF_SESSION_ID` is present; `PostToolUse` only validates or backfills binding.
 - **Canonical path injection** — When hooks inject a plan, read and update only the listed `task_plan`, `findings`, and `progress` files. Do not read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or another `.planning/<dir>/`.
 - **Resolver boundary** — `resolve-plan-dir.sh` is session-aware only inside hooks because the Python adapter injects `PLAN_ID`. In ordinary Bash, do not run it without an explicit `PLAN_ID`.
+- **PreToolUse guard** — Bare `resolve-plan-dir.sh` calls are blocked while planning hooks are active. Use hook-injected paths or explicitly set `PLAN_ID`.
 - **Temporary-task suppression** — If your prompt contains `临时任务`, planning hooks stay silent for that turn and clear on `Stop`.
 - **Gating** — `.planning/.hooks_mode` (`on`, `off`, `session`) or `PWF_HOOKS` controls whether planning hooks fire. Default project registration writes `on`.
 

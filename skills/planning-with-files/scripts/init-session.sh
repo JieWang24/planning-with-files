@@ -89,6 +89,58 @@ short_uuid() {
     printf '%08x' "$(date +%s)" | cut -c1-8
 }
 
+safe_session_id() {
+    local raw="$1"
+    local session_id
+    session_id="$(printf '%s' "$raw" \
+        | sed -nE 's/.*([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}).*/\1/p' \
+        | tail -n 1 \
+        | tr '[:upper:]' '[:lower:]')"
+    if [ -n "$session_id" ]; then
+        printf '%s\n' "$session_id"
+        return 0
+    fi
+    if [ -z "$raw" ]; then
+        return 0
+    fi
+    case "$raw" in
+        *[!A-Za-z0-9_.-]*)
+            return 0
+            ;;
+    esac
+    if [ "${#raw}" -ge 8 ] && [ "${#raw}" -le 160 ]; then
+        printf '%s\n' "$raw"
+    fi
+}
+
+session_id_from_env() {
+    local key raw session_id
+    for key in PWF_SESSION_ID CODEX_THREAD_ID CODEX_CONVERSATION_ID CODEX_SESSION_ID; do
+        eval "raw=\${$key:-}"
+        session_id="$(safe_session_id "$raw")"
+        if [ -n "$session_id" ]; then
+            printf '%s\n' "$session_id"
+            return 0
+        fi
+    done
+}
+
+bind_session_plan_if_available() {
+    local plan_root="$1"
+    local plan_id="$2"
+    local session_id session_plan_path
+    session_id="$(session_id_from_env)"
+    if [ -z "$session_id" ]; then
+        echo "[planning-with-files] No stable session id in environment; PostToolUse will try to bind this session."
+        return 0
+    fi
+    mkdir -p "${plan_root}/sessions"
+    session_plan_path="${plan_root}/sessions/${session_id}.active_plan"
+    printf "%s\n" "$plan_id" > "$session_plan_path"
+    printf "attached\n" > "${plan_root}/sessions/${session_id}.attached"
+    echo "[planning-with-files] Session plan bound: $session_plan_path"
+}
+
 write_default_task_plan() {
     cat > "$1" << 'EOF'
 # Task Plan: [Brief Description]
@@ -270,6 +322,7 @@ if [ "$SLUG_MODE" -eq 1 ]; then
     echo "PLAN_ID=$PLAN_ID"
     create_files_in "$PLAN_DIR"
     printf "%s\n" "$PLAN_ID" > "${PLAN_ROOT}/.active_plan"
+    bind_session_plan_if_available "$PLAN_ROOT" "$PLAN_ID"
     echo ""
     echo "Active plan recorded: ${PLAN_ROOT}/.active_plan"
     echo "Pin this terminal to the plan for parallel sessions:"

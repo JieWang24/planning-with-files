@@ -15,6 +15,30 @@ TEMPORARY_TASK_KEYWORDS = ("临时任务",)
 UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+SAFE_SESSION_ID_RE = re.compile(r"^[A-Za-z0-9_.-]{8,160}$")
+RESOLVER_INVOKE_RE = re.compile(
+    r"(?:^|[;&|`$(]\s*)"
+    r"(?:env\s+(?:\S+=\S+\s+)*)?"
+    r"(?:sh|bash|zsh|pwsh|powershell)\b[^\n;|&]*resolve-plan-dir\.(?:sh|ps1)\b"
+    r"|(?:^|[;&|`$(]\s*)(?:\.{0,2}/|~|\$HOME|/)[^\s;|&]*resolve-plan-dir\.(?:sh|ps1)\b",
+    re.MULTILINE,
+)
+STABLE_SESSION_ENV_KEYS = (
+    "PWF_SESSION_ID",
+    "CODEX_THREAD_ID",
+    "CODEX_CONVERSATION_ID",
+    "CODEX_SESSION_ID",
+)
+STABLE_SESSION_PAYLOAD_KEYS = (
+    "thread_id",
+    "threadId",
+    "conversation_id",
+    "conversationId",
+    "session_id",
+    "sessionId",
+    "codex_thread_id",
+    "codexThreadId",
+)
 BASH_TOOL_NAMES = {
     "bash",
     "shell",
@@ -50,16 +74,42 @@ def _session_id_from_transcript_path(payload: dict[str, Any]) -> str:
     return matches[-1] if matches else ""
 
 
+def _safe_session_id(value: Any) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    matches = UUID_RE.findall(text)
+    if matches:
+        return matches[-1].lower()
+    if "/" in text or "\\" in text:
+        return ""
+    if SAFE_SESSION_ID_RE.fullmatch(text):
+        return text
+    return ""
+
+
 def session_id_from_payload(payload: dict[str, Any]) -> str | None:
-    transcript_sid = _session_id_from_transcript_path(payload)
+    # Prefer stable process-level ids so init-session.sh and all hooks write the
+    # same .planning/sessions/<id>.active_plan file. turn_id is deliberately not
+    # used by default because Codex can change it within one conversation.
+    for key in STABLE_SESSION_ENV_KEYS:
+        session_id = _safe_session_id(os.environ.get(key))
+        if session_id:
+            return session_id
+
+    transcript_sid = _safe_session_id(_session_id_from_transcript_path(payload))
     if transcript_sid:
         return transcript_sid
-    for key in ("thread_id", "conversation_id", "session_id", "turn_id"):
-        sid = payload.get(key)
-        if isinstance(sid, str) and sid:
-            return sid
-    env_sid = os.environ.get("PWF_SESSION_ID", "")
-    return env_sid if env_sid else None
+
+    for key in STABLE_SESSION_PAYLOAD_KEYS:
+        session_id = _safe_session_id(payload.get(key))
+        if session_id:
+            return session_id
+
+    if os.environ.get("PWF_ALLOW_TURN_ID_SESSION") == "1":
+        return _safe_session_id(payload.get("turn_id") or payload.get("turnId")) or None
+
+    return None
 
 
 def tool_name_from_payload(payload: dict[str, Any]) -> str:
@@ -99,6 +149,17 @@ def is_plan_creation_command(payload: dict[str, Any]) -> bool:
         return False
     command_text = command_text_from_payload(payload)
     return any(script_name in command_text for script_name in PLAN_CREATION_SCRIPT_NAMES)
+
+
+def is_bare_resolver_command(payload: dict[str, Any]) -> bool:
+    if not is_bash_tool(payload):
+        return False
+    command_text = command_text_from_payload(payload)
+    if not RESOLVER_INVOKE_RE.search(command_text):
+        return False
+    if "PWF_ALLOW_BARE_RESOLVE=1" in command_text:
+        return False
+    return "PLAN_ID=" not in command_text and "$PLAN_ID" not in command_text
 
 
 def _normalize_mode(value: str) -> str:
@@ -178,6 +239,7 @@ def bind_session_to_plan(root: Path, session_id: str | None, plan_id: str) -> bo
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(f"{plan_id}\n", encoding="utf-8")
+        (path.parent / f"{session_id}.attached").write_text("attached\n", encoding="utf-8")
     except OSError:
         return False
     return True
@@ -204,7 +266,7 @@ def record_project_active_before_tool(root: Path, session_id: str | None) -> Non
 def rebind_session_if_project_active_changed(root: Path, session_id: str | None) -> str:
     path = _before_tool_active_plan_path(root, session_id)
     if path is None or not path.exists():
-        return session_active_plan_id(root, session_id)
+        return session_active_plan_id(root, session_id) or rebind_session_to_project_active(root, session_id)
     before_id = _read_plan_id(path)
     current_id = project_active_plan_id(root)
     try:
@@ -219,9 +281,9 @@ def rebind_session_if_project_active_changed(root: Path, session_id: str | None)
 
 def rebind_session_to_project_active(root: Path, session_id: str | None) -> str:
     plan_id = project_active_plan_id(root)
-    if plan_id:
-        bind_session_to_plan(root, session_id, plan_id)
-    return plan_id
+    if plan_id and bind_session_to_plan(root, session_id, plan_id):
+        return plan_id
+    return ""
 
 
 def ensure_session_plan(root: Path, session_id: str | None) -> str:
@@ -318,6 +380,18 @@ def emit_json(payload: dict[str, Any]) -> None:
         return
     json.dump(payload, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
+
+
+def emit_user_prompt_context(message: str) -> None:
+    emit_json(
+        {
+            "systemMessage": message,
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": message,
+            },
+        }
+    )
 
 
 def parse_json(text: str) -> dict[str, Any]:

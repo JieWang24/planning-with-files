@@ -62,7 +62,7 @@ rsync -a "$REPO_DIR/hooks/" "$CODEX_HOME/hooks/"
 rsync -a "$REPO_DIR/tools/" "$CODEX_HOME/tools/"
 
 chmod +x "$CODEX_HOME"/hooks/*.py "$CODEX_HOME"/hooks/*.sh 2>/dev/null || true
-chmod +x "$CODEX_HOME"/tools/*.py "$CODEX_HOME"/skills/planning-with-files/scripts/*.sh 2>/dev/null || true
+chmod +x "$CODEX_HOME"/tools/*.py "$CODEX_HOME"/tools/*.sh "$CODEX_HOME"/skills/planning-with-files/scripts/*.sh 2>/dev/null || true
 
 log "installed skill -> $CODEX_HOME/skills/planning-with-files"
 log "installed hooks -> $CODEX_HOME/hooks"
@@ -85,7 +85,7 @@ No project was registered. To enable hooks for a project:
 
 Use mode "on" for automatic script-first planning behavior.
 Use mode "off" to disable planning hooks in a project.
-Use mode "session" only when you intentionally manage .planning/sessions/*.attached sentinels.
+Use mode "session" only for manual opt-in experiments; init-session can create the attached sentinel when a stable session id exists.
 EOF
 fi
 

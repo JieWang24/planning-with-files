@@ -13,10 +13,11 @@ The `main` branch is the Codex default branch. The `claude` branch is kept separ
 | `hooks/hooks.json` | Project hook template matching the registrar output. |
 | `tools/register-planning-hooks.py` | Registers project-level `.codex/hooks.json` entries. |
 | `tools/planning-hooks-mode.py` | Sets or reads `.planning/.hooks_mode`. |
+| `tools/smoke-test-codex-session-binding.sh` | End-to-end empty-project smoke test for session-plan binding. |
 | `install.sh` | Installs the portable package into `~/.codex` and optionally registers projects. |
 | `docs/codex-setup.md` | Detailed install, migration, behavior, and troubleshooting guide. |
 | `docs/functional-spec.md` | Full behavior contract for installation, registration, hooks, modes, and session binding. |
-| `docs/codex-sync-step1-2.md` | Codex implementation note for the Claude-side anti cross-plan-read Step 1/2 sync. |
+| `docs/codex-sync-step1-2.md` | Codex implementation note for anti cross-plan reads and stable session binding. |
 
 ## Quick Install On A New Machine
 
@@ -63,13 +64,16 @@ The script creates:
 
 It also prints `PLAN_ID=<plan-id>`. Immediately after creation, use that id and work only inside `.planning/<PLAN_ID>/`.
 
-After the Bash command finishes, `PostToolUse` binds the current Codex session to the new plan:
+When `CODEX_THREAD_ID` or `PWF_SESSION_ID` is available, `init-session.sh` immediately binds the current Codex session to the new plan:
 
 ```text
 .planning/sessions/<session-id>.active_plan
+.planning/sessions/<session-id>.attached
 ```
 
-`SessionStart`, `UserPromptSubmit`, `Stop`, and `PermissionRequest` read only the session plan. They do not fallback to `.planning/.active_plan` when no session plan exists.
+`PostToolUse` then validates or backfills the binding after the Bash command. It no longer reports a session binding when no stable session id exists.
+
+`SessionStart`, `UserPromptSubmit`, `Stop`, and `PermissionRequest` read only the session plan. They do not fall back to `.planning/.active_plan` when no session plan exists.
 
 When a session plan exists, hook output names the canonical files for this session:
 
@@ -90,8 +94,8 @@ Do not run `resolve-plan-dir.sh` yourself as a session resolver in ordinary Bash
 | --- | --- |
 | `SessionStart` | If the current session has a session plan, render that plan context. Otherwise stay silent. |
 | `UserPromptSubmit` | If prompt contains `临时任务`, temporarily disables planning hooks for that turn. Otherwise renders session-plan context plus canonical file paths when bound. |
-| `PreToolUse` | Bash-only, currently only recognizes `init-session.sh` / `init-session.ps1`; no normal reminder output. |
-| `PostToolUse` | If Bash command created a plan with `init-session`, bind this session to the new active plan. Otherwise, if session plan exists, remind the agent to update `progress.md` and phase status. |
+| `PreToolUse` | Bash-only. Records the active plan before `init-session` and blocks bare `resolve-plan-dir.sh` / `.ps1` calls without `PLAN_ID`. |
+| `PostToolUse` | If Bash command created a plan with `init-session`, validates or backfills session binding. Otherwise, if session plan exists, reminds the agent to update the canonical `progress.md` and phase status paths. |
 | `Stop` | Checks only the session plan for completion. Blocks incomplete tasks unless Codex reports the stop hook is already active. |
 | `PermissionRequest` | If session plan exists, reminds the user to review current phase before approving. |
 
@@ -109,7 +113,7 @@ Supported values:
 | --- | --- |
 | `on` | Planning hooks run for the project. Recommended default for this script-first workflow. |
 | `off` | Planning hooks are disabled for the project. |
-| `session` | Hooks run only when `.planning/sessions/<session-id>.attached` exists. Use only for manual opt-in experiments. |
+| `session` | Hooks run only when `.planning/sessions/<session-id>.attached` exists. `init-session.sh --plan-dir` creates it when a stable session id is available. Use mainly for manual opt-in experiments. |
 
 Manage the mode with:
 
@@ -137,5 +141,6 @@ Use this for one-off questions or simple commands that should not activate plann
 7. Create a test plan with `init-session.sh --plan-dir "Migration Smoke Test"`.
 8. Confirm `.planning/sessions/<session-id>.active_plan` points to the new plan.
 9. Confirm subsequent prompts render the session plan, not the project `.active_plan`.
+10. Run `~/.codex/tools/smoke-test-codex-session-binding.sh` or the repository copy before trusting a migrated machine.
 
-See [docs/codex-setup.md](docs/codex-setup.md) for setup, [docs/functional-spec.md](docs/functional-spec.md) for the full runtime contract, and [docs/codex-sync-step1-2.md](docs/codex-sync-step1-2.md) for the anti cross-plan-read Step 1/2/3 sync note.
+See [docs/codex-setup.md](docs/codex-setup.md) for setup, [docs/functional-spec.md](docs/functional-spec.md) for the full runtime contract, and [docs/codex-sync-step1-2.md](docs/codex-sync-step1-2.md) for the anti cross-plan-read/session-binding sync note.
