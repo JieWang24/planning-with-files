@@ -11,12 +11,15 @@ def main() -> None:
 
     if adapter.is_temporarily_disabled(root, session_id):
         adapter.clear_temporary_disable(root, session_id)
+        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "temporary-task cleared; no completion check"))
         return
 
     if not adapter.is_session_attached(root, session_id):
+        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "not attached; no completion check"))
         return
 
     if not adapter.effective_plan_present(root, session_id):
+        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "no plan resolved; allowing stop"))
         return
 
     stdout, _ = adapter.run_shell_script("stop.sh", root, session_id)
@@ -24,17 +27,21 @@ def main() -> None:
 
     message = result.get("followup_message")
     if not isinstance(message, str) or not message:
+        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "no followup message"))
         return
 
     if "ALL PHASES COMPLETE" in message:
-        adapter.emit_json({"systemMessage": message})
+        dbg = adapter.hook_debug_line(root, session_id, "Stop", "all phases complete; allowing stop")
+        adapter.emit_json({"systemMessage": adapter.with_debug_prefix(dbg, message)})
         return
 
     if bool(payload.get("stop_hook_active")):
-        adapter.emit_json({"systemMessage": message})
+        dbg = adapter.hook_debug_line(root, session_id, "Stop", "stop_hook_active; not re-blocking")
+        adapter.emit_json({"systemMessage": adapter.with_debug_prefix(dbg, message)})
         return
 
-    adapter.emit_json({"decision": "block", "reason": message})
+    dbg = adapter.hook_debug_line(root, session_id, "Stop", "blocking stop; phases incomplete")
+    adapter.emit_json({"decision": "block", "reason": adapter.with_debug_prefix(dbg, message)})
 
 
 if __name__ == "__main__":

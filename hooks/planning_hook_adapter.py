@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -379,6 +380,103 @@ def effective_plan_present(root: Path, session_id: str | None) -> bool:
     return (root / "task_plan.md").exists()
 
 
+TRUTHY_VALUES = {"1", "true", "yes", "on", "enable", "enabled"}
+FALSY_VALUES = {"0", "false", "no", "off", "disable", "disabled"}
+
+
+def _truthy(value: str) -> bool:
+    return _normalize_mode(value) in TRUTHY_VALUES
+
+
+def _falsy(value: str) -> bool:
+    return _normalize_mode(value) in FALSY_VALUES
+
+
+def _debug_mode_from_project(root: Path) -> str:
+    debug_file = root / ".planning" / ".hooks_debug"
+    if not debug_file.exists():
+        return ""
+    try:
+        return _normalize_mode(debug_file.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+
+
+def is_hook_debug_enabled(root: Path) -> bool:
+    """Default OFF. Enable per-shell with PWF_HOOK_DEBUG=on, or per-project with
+    a `.planning/.hooks_debug` file containing `on` (env wins over file)."""
+    env_value = os.environ.get("PWF_HOOK_DEBUG", "")
+    if _truthy(env_value):
+        return True
+    if _falsy(env_value):
+        return False
+    return _truthy(_debug_mode_from_project(root))
+
+
+def _debug_log_path(root: Path) -> Path:
+    return root / ".planning" / "debug" / "hook-events.jsonl"
+
+
+def hook_debug_line(
+    root: Path,
+    session_id: str | None,
+    hook_name: str,
+    note: str = "",
+) -> str:
+    """When hook debug is enabled, append a JSONL event to
+    `.planning/debug/hook-events.jsonl` and return a human-readable line.
+    When disabled (the default) return "" and do nothing — zero overhead."""
+    if not is_hook_debug_enabled(root):
+        return ""
+
+    plan_id = session_active_plan_id(root, session_id)
+    active_id = project_active_plan_id(root)
+    mode = _mode_from_project(root) or "legacy"
+    attached = is_session_attached(root, session_id)
+    log_path = _debug_log_path(root)
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "hook": hook_name,
+        "cwd": str(root),
+        "session_id": session_id or "",
+        "mode": mode,
+        "attached": attached,
+        "session_plan": plan_id,
+        "project_active_plan": active_id,
+        "note": note,
+    }
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+            fh.write("\n")
+    except OSError:
+        pass
+
+    bits = [
+        f"[planning-with-files debug] {hook_name} triggered",
+        f"mode={mode}",
+        f"session={session_id or 'none'}",
+        f"attached={'yes' if attached else 'no'}",
+        f"session_plan={plan_id or 'none'}",
+        f"active_plan={active_id or 'none'}",
+    ]
+    if note:
+        bits.append(f"note={note}")
+    bits.append(f"log={log_path}")
+    return "; ".join(bits)
+
+
+def with_debug_prefix(debug_line: str, message: str) -> str:
+    return "\n".join(part for part in (debug_line, message) if part)
+
+
+def emit_debug(debug_line: str) -> None:
+    """Surface a debug line to the user via systemMessage (not model context)."""
+    if debug_line:
+        emit_json({"systemMessage": debug_line})
+
+
 def emit_json(payload: dict[str, Any]) -> None:
     if not payload:
         return
@@ -386,24 +484,29 @@ def emit_json(payload: dict[str, Any]) -> None:
     sys.stdout.write("\n")
 
 
-def emit_context(event_name: str, text: str) -> None:
+def emit_context(event_name: str, text: str, debug_line: str = "") -> None:
     """Inject text into the model context using Claude Code's hook contract.
 
     Claude Code adds `hookSpecificOutput.additionalContext` to the conversation
     for SessionStart / UserPromptSubmit / PreToolUse / PostToolUse. This replaces
     the Codex `{"systemMessage": ...}` channel, which on Claude Code only renders
     a transient notice and is NOT fed back to the model.
+
+    When `debug_line` is set (hook debug enabled), it is attached as a
+    user-visible `systemMessage` alongside the model-facing additionalContext.
     """
     if not text:
+        emit_debug(debug_line)
         return
-    emit_json(
-        {
-            "hookSpecificOutput": {
-                "hookEventName": event_name,
-                "additionalContext": text,
-            }
+    payload: dict[str, Any] = {
+        "hookSpecificOutput": {
+            "hookEventName": event_name,
+            "additionalContext": text,
         }
-    )
+    }
+    if debug_line:
+        payload["systemMessage"] = debug_line
+    emit_json(payload)
 
 
 def parse_json(text: str) -> dict[str, Any]:

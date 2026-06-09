@@ -235,3 +235,5 @@ if 操作失败:
 - **自动绑定**：运行 `init-session.sh` 时当前会话自动绑定到新计划。
 - **临时任务抑制**：提问含关键词 **`临时任务`** 时，本会话所有 planning 钩子静默，直到下次正常提问（或 Stop）。
 - **门控**：`.planning/.hooks_mode`（`on`/`off`/`session`）或 `PWF_HOOKS` 环境变量；默认 `on`（官方开箱行为），`session` 为严格按会话隔离。
+- **钩子调试（默认关）**：设 `PWF_HOOK_DEBUG=on`（环境变量）或运行 `tools/planning-hooks-debug.py on`（写 `.planning/.hooks_debug`）。开启后每个钩子会用一行 `systemMessage` 说明自己做了什么，并把事件追加到 `.planning/debug/hook-events.jsonl`。用 `off` / 删文件关闭。关闭时零开销。
+- **裸 resolver 拦截**：`PreToolUse` 会拒绝在 Bash 里不带 `PLAN_ID` 裸跑 `resolve-plan-dir.sh` 的命令（它会回退到 `.active_plan`＝错误计划）。用 `PWF_ALLOW_BARE_RESOLVE=1` 或显式 `PLAN_ID=<id>` 豁免。

@@ -323,6 +323,8 @@ This fork registers hooks from `hooks/hooks.json` (not the SKILL.md frontmatter,
 - **Auto-bind** — running `init-session.sh` binds the current session to the newly-created plan automatically.
 - **Temporary-task suppression** — if your prompt contains the keyword **`临时任务`**, all planning hooks go silent for that session until your next normal prompt (or Stop). Use it for one-off side tasks you don't want governed by the active plan.
 - **Gating** — `.planning/.hooks_mode` (`on` / `off` / `session`) or the `PWF_HOOKS` env var control whether hooks fire. Default is **on** (official out-of-the-box behaviour); `session` enables strict per-session isolation (requires a `.attached` sentinel).
+- **Hook debug (default OFF)** — set `PWF_HOOK_DEBUG=on` (env) or run `tools/planning-hooks-debug.py on` (writes `.planning/.hooks_debug`). Each hook then emits a one-line `systemMessage` of what it did and appends a JSONL event to `.planning/debug/hook-events.jsonl`. Disable with `off` / deleting the file. Zero overhead when off.
+- **Bare-resolver guard** — `PreToolUse` denies a Bash command that runs `resolve-plan-dir.sh` without `PLAN_ID` (it would fall back to `.active_plan` = the wrong plan). Override with `PWF_ALLOW_BARE_RESOLVE=1` or an explicit `PLAN_ID=<id>`.
 
 ## Advanced Topics
 

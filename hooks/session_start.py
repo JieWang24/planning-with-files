@@ -10,15 +10,20 @@ def main() -> None:
     session_id = adapter.session_id_from_payload(payload)
 
     if not adapter.is_session_attached(root, session_id):
+        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "SessionStart", "not attached; no context"))
         return
 
     if not adapter.effective_plan_present(root, session_id):
+        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "SessionStart", "no plan resolved; no context"))
         return
 
     stdout, stderr = adapter.run_shell_script("session-start.sh", root, session_id)
     message = "\n".join(part for part in (stdout, stderr) if part)
+    dbg = adapter.hook_debug_line(root, session_id, "SessionStart", "rendered startup context")
     if message:
-        adapter.emit_context("SessionStart", message)
+        adapter.emit_context("SessionStart", message, dbg)
+    else:
+        adapter.emit_debug(dbg)
 
 
 if __name__ == "__main__":
