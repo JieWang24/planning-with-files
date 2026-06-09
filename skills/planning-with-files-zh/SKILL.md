@@ -15,9 +15,17 @@ metadata:
 
 ## 第一步：恢复上下文（v2.2.0）
 
-**在做任何事之前**，检查规划文件是否存在并读取它们：
+**在做任何事之前**，先解析出本会话的计划目录并读取其中的文件：
 
-1. 如果 `task_plan.md` 存在，立即读取 `task_plan.md`、`progress.md` 和 `findings.md`。
+1. 解析本会话对应的计划目录（会遵循「每会话绑定」）：
+
+```bash
+PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"
+```
+
+   - 若 `PLAN_DIR` 非空，读取 `$PLAN_DIR/task_plan.md`、`$PLAN_DIR/progress.md`、`$PLAN_DIR/findings.md`。
+   - **仅当** `PLAN_DIR` 为空且存在旧版根目录 `./task_plan.md` 时，才读取根目录文件（向后兼容）。
+   - **只读取解析出的那份计划的文件。不要读取 `.planning/.active_plan` 或其他 `.planning/<目录>/`——那些属于别的会话。**
 2. 然后检查上一个会话是否有未同步的上下文：
 
 ```bash
@@ -39,24 +47,23 @@ $(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/scripts/session
 ## 重要：文件存放位置
 
 - **模板**在 `${CLAUDE_PLUGIN_ROOT}/templates/` 中
-- **你的规划文件**放在**你的项目目录**中
+- **你的规划文件**放在项目下的**独立计划目录** `.planning/<YYYY-MM-DD>-<slug>/` 中，以保证每个会话/计划相互隔离。不要把规划文件散落在项目根目录。
 
 | 位置 | 存放内容 |
 |------|---------|
 | 技能目录 (`${CLAUDE_PLUGIN_ROOT}/`) | 模板、脚本、参考文档 |
-| 你的项目目录 | `task_plan.md`、`findings.md`、`progress.md` |
+| `<项目>/.planning/<id>/` | `task_plan.md`、`findings.md`、`progress.md`（本会话的计划） |
 
 ## 快速开始
 
 在任何复杂任务之前：
 
-1. **创建 `task_plan.md`** — 参考 [templates/task_plan.md](templates/task_plan.md) 模板
-2. **创建 `findings.md`** — 参考 [templates/findings.md](templates/findings.md) 模板
-3. **创建 `progress.md`** — 参考 [templates/progress.md](templates/progress.md) 模板
-4. **决策前重新读取计划** — 在注意力窗口中刷新目标
-5. **每个阶段完成后更新** — 标记完成，记录错误
+1. **创建计划目录** — 运行 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh" --plan-dir "<任务名>"`。这会用模板创建 `.planning/<id>/{task_plan.md,findings.md,progress.md}` 并把当前会话绑定到它。
+2. **解析它** — `PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"`，然后只在 `$PLAN_DIR` 内工作。
+3. **决策前重新读取计划** — 在注意力窗口中刷新目标。
+4. **每个阶段完成后更新** — 标记完成，记录错误。
 
-> **注意：** 规划文件放在你的项目根目录，不是技能安装目录。
+> **注意：** 规划文件放在 `.planning/<id>/`，不在项目根目录，也不在技能安装目录。不要创建根目录的 `task_plan.md`。
 
 ## 核心模式
 
@@ -78,7 +85,7 @@ $(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/scripts/session
 ## 关键规则
 
 ### 1. 先创建计划
-永远不要在没有 `task_plan.md` 的情况下开始复杂任务。没有例外。
+永远不要在没有计划的情况下开始复杂任务。计划要建在 `.planning/<id>/task_plan.md`（通过 `init-session.sh --plan-dir`），不要建在项目根目录。没有例外。
 
 ### 2. 两步操作规则
 > "每执行2次查看/浏览器/搜索操作后，立即将关键发现保存到文件中。"
@@ -222,7 +229,7 @@ if 操作失败:
 
 本分支的钩子从 `hooks/hooks.json` 注册（不用 SKILL.md frontmatter——插件内有触发缺陷 #17688）。在官方行为之上新增：
 
-- **每会话独立绑定计划**：`.planning/sessions/<session-id>.active_plan`；解析顺序 `$PLAN_ID` → `.planning/.active_plan` → 最新计划目录 → 旧版 `./task_plan.md`。绑定是并行隔离的覆盖项；未绑定会话仍拿到项目活动/最新计划。
+- **每会话独立绑定计划**：`.planning/sessions/<session-id>.active_plan`；解析顺序 `$PLAN_ID` → `.planning/.active_plan` → 最新计划目录 → 旧版 `./task_plan.md`。绑定是并行隔离的覆盖项；未绑定会话仍拿到项目活动/最新计划。注入的上下文会点名本会话的计划文件路径；**只读写这些文件**，绝不读取 `.planning/.active_plan` 或别的计划目录。
 - **自动绑定**：运行 `init-session.sh` 时当前会话自动绑定到新计划。
 - **临时任务抑制**：提问含关键词 **`临时任务`** 时，本会话所有 planning 钩子静默，直到下次正常提问（或 Stop）。
 - **门控**：`.planning/.hooks_mode`（`on`/`off`/`session`）或 `PWF_HOOKS` 环境变量；默认 `on`（官方开箱行为），`session` 为严格按会话隔离。

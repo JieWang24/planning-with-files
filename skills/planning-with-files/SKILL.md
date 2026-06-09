@@ -13,9 +13,17 @@ Work like Manus: Use persistent markdown files as your "working memory on disk."
 
 ## FIRST: Restore Context (v2.2.0)
 
-**Before doing anything else**, check if planning files exist and read them:
+**Before doing anything else**, resolve THIS session's plan directory and read its files:
 
-1. If `task_plan.md` exists, read `task_plan.md`, `progress.md`, and `findings.md` immediately.
+1. Resolve the canonical plan directory (honours per-session binding):
+
+```bash
+PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"
+```
+
+   - If `PLAN_DIR` is non-empty, read `$PLAN_DIR/task_plan.md`, `$PLAN_DIR/progress.md`, and `$PLAN_DIR/findings.md`.
+   - Only if `PLAN_DIR` is empty **and** a legacy root `./task_plan.md` exists, read the root files (back-compat).
+   - **Read ONLY the resolved plan's files. Do NOT read `.planning/.active_plan` or other `.planning/<dir>/` — those belong to other sessions.**
 2. Then check for unsynced context from a previous session:
 
 ```bash
@@ -37,24 +45,23 @@ If catchup report shows unsynced context:
 ## Important: Where Files Go
 
 - **Templates** are in `${CLAUDE_PLUGIN_ROOT}/templates/`
-- **Your planning files** go in **your project directory**
+- **Your planning files** go in a **dedicated plan directory** under your project: `.planning/<YYYY-MM-DD>-<slug>/`. This keeps each session/plan isolated. Do not scatter planning files at the project root.
 
 | Location | What Goes There |
 |----------|-----------------|
 | Skill directory (`${CLAUDE_PLUGIN_ROOT}/`) | Templates, scripts, reference docs |
-| Your project directory | `task_plan.md`, `findings.md`, `progress.md` |
+| `<project>/.planning/<id>/` | `task_plan.md`, `findings.md`, `progress.md` (this session's plan) |
 
 ## Quick Start
 
 Before ANY complex task:
 
-1. **Create `task_plan.md`** — Use [templates/task_plan.md](templates/task_plan.md) as reference
-2. **Create `findings.md`** — Use [templates/findings.md](templates/findings.md) as reference
-3. **Create `progress.md`** — Use [templates/progress.md](templates/progress.md) as reference
-4. **Re-read plan before decisions** — Refreshes goals in attention window
-5. **Update after each phase** — Mark complete, log errors
+1. **Create the plan directory** — run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh" --plan-dir "<task name>"`. This creates `.planning/<id>/{task_plan.md,findings.md,progress.md}` from the templates and binds this session to it.
+2. **Resolve it** — `PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"`, then work only inside `$PLAN_DIR`.
+3. **Re-read the plan before decisions** — refreshes goals in attention window.
+4. **Update after each phase** — mark complete, log errors.
 
-> **Note:** Planning files go in your project root, not the skill installation folder.
+> **Note:** Planning files live in `.planning/<id>/`, not the project root and not the skill installation folder. Do not create a root-level `task_plan.md`.
 
 ## The Core Pattern
 
@@ -76,7 +83,7 @@ Filesystem = Disk (persistent, unlimited)
 ## Critical Rules
 
 ### 1. Create Plan First
-Never start a complex task without `task_plan.md`. Non-negotiable.
+Never start a complex task without a plan. Create it as `.planning/<id>/task_plan.md` (via `init-session.sh --plan-dir`), not a root-level file. Non-negotiable.
 
 ### 2. The 2-Action Rule
 > "After every 2 view/browser/search operations, IMMEDIATELY save key findings to text files."
@@ -310,7 +317,7 @@ After install, bare `/loop <interval>` runs the planning-aware tick.
 
 This fork registers hooks from `hooks/hooks.json` (not the SKILL.md frontmatter, which is unreliable inside plugins — see Claude Code issue #17688). On top of the official behaviour it adds:
 
-- **Per-session plan binding** — each session can bind to its own plan via `.planning/sessions/<session-id>.active_plan`. Resolution order is `$PLAN_ID` → `.planning/.active_plan` → newest plan dir → legacy `./task_plan.md`. Binding is an *override* for parallel isolation; unbound sessions still get the project's active/newest plan.
+- **Per-session plan binding** — each session can bind to its own plan via `.planning/sessions/<session-id>.active_plan`. Resolution order is `$PLAN_ID` → `.planning/.active_plan` → newest plan dir → legacy `./task_plan.md`. Binding is an *override* for parallel isolation; unbound sessions still get the project's active/newest plan. The injected context names the canonical plan files for the session — read and update ONLY those, never `.planning/.active_plan` or another plan's directory.
 - **Auto-bind** — running `init-session.sh` binds the current session to the newly-created plan automatically.
 - **Temporary-task suppression** — if your prompt contains the keyword **`临时任务`**, all planning hooks go silent for that session until your next normal prompt (or Stop). Use it for one-off side tasks you don't want governed by the active plan.
 - **Gating** — `.planning/.hooks_mode` (`on` / `off` / `session`) or the `PWF_HOOKS` env var control whether hooks fire. Default is **on** (official out-of-the-box behaviour); `session` enables strict per-session isolation (requires a `.attached` sentinel).
