@@ -1,7 +1,7 @@
 {
   "name": "planning-with-files",
-  "version": "2.43.0-claude.4",
-  "description": "Claude Code fork of planning-with-files (Manus-style persistent planning files). Hooks run from hooks/hooks.json (reliable, avoids skill-frontmatter bug #17688) and add local customizations: per-session plan binding, auto-bind on init-session, 临时任务 suppression, and .hooks_mode gating. Dir-based .planning/<id>/ plans with per-session read anchoring (anti cross-plan read). v2.43.0-claude.4 stops instructing the agent to run resolve-plan-dir.sh manually (not session-aware in a plain shell → wrong .active_plan fallback); the agent uses hook-injected canonical paths + the PLAN_ID printed by init-session — on top of the official attestation, PreCompact, and security framing.",
+  "version": "2.43.0-claude.5",
+  "description": "Claude Code fork of planning-with-files (Manus-style persistent planning files). Hooks run from hooks/hooks.json (reliable, avoids skill-frontmatter bug #17688) and add local customizations: per-session plan binding, auto-bind on init-session, 临时任务 suppression, and .hooks_mode gating. Dir-based .planning/<id>/ plans with per-session read anchoring (anti cross-plan read). v2.43.0-claude.5 adds a HARD guard: PreToolUse denies a bare resolve-plan-dir.sh run (no PLAN_ID → wrong .active_plan fallback; override with PWF_ALLOW_BARE_RESOLVE=1), and Stop/PostToolUse reminders now name resolved canonical paths — on top of the official attestation, PreCompact, and security framing.",
   "author": {
     "name": "OthmanAdi (fork maintained by JieWang24, branch: claude)",
     "url": "https://github.com/OthmanAdi"

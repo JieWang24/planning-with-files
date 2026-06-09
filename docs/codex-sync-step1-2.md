@@ -122,12 +122,23 @@ exit 0
 - **续接已有计划** → 用**钩子注入的 canonical 路径**（Step 1 那段）；它来自钩子、`PLAN_ID` 已注入，指向会话绑定的那份。
 - **新建计划** → 用 `init-session.sh --plan-dir` 打印的 **`PLAN_ID=<id>`** 行，直接用 `.planning/<id>/`。
 
-需要改的（对应 Claude 端 `2.43.0-claude.4`）：
+需要改的（软引导，对应 Claude 端 `2.43.0-claude.4`）：
 1. **§3.1** `/plan`(+中文)命令、SKILL「恢复上下文」「快速开始」：删掉"让 agent 跑 `resolve-plan-dir.sh`"的指示，改为上面两条；并明写"不要自己跑 resolve-plan-dir.sh，普通 shell 无 PLAN_ID 会错误回退"。
 2. **§3.2** `pre-tool-use.sh`：把"Re-read task_plan.md / findings.md"的**裸文件名**改成引用解析出的真实路径（`$PLAN_FILE` / `$FINDINGS_FILE`）。
 3. **§3.3** 渲染器 `user-prompt-submit.sh`：区分真绑定与回退 —— `$PLAN_ID` 非空时输出 `BOUND to plan dir`，否则 `RESOLVED via project default`。
 
-> 注：钩子内部仍照用 `resolve-plan-dir.sh`（适配器已注入 `PLAN_ID`，是 session-aware 的）。只是**禁止 agent 在普通 Bash 里手动跑它**。
+### §3.4 硬约束（`2.43.0-claude.5`；Codex `main` 已有等价实现）
+
+软引导挡不住模型自行裸跑脚本。**唯一能真正拦截的是 PreToolUse**：
+
+- adapter 新增 `is_bare_resolver_command(payload)`（正则 `RESOLVER_INVOKE_RE` 匹配 `resolve-plan-dir.(sh|ps1)` 调用，且命令里没有 `PLAN_ID=` / `$PLAN_ID`，也不含豁免标记 `PWF_ALLOW_BARE_RESOLVE=1`）。
+- `pre_tool_use.py`：`is_session_attached` 之后、`effective_plan_present` 之前，若命中 `is_bare_resolver_command` → 直接返回 deny：
+  - Claude 端：`{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"…"}}`
+  - Codex 端(main 已实现)：`{"decision":"block","reason":"…"}`（`is_bare_resolver_command` 同名函数）
+- 豁免：命令里带 `PLAN_ID=<id>`、`$PLAN_ID`，或 `PWF_ALLOW_BARE_RESOLVE=1`。
+
+> 注：钩子内部仍照用 `resolve-plan-dir.sh`（适配器已注入 `PLAN_ID`，是 session-aware 的）。硬约束只拦 **agent 在普通 Bash 里裸跑**它。
+> 边界：deny 只堵"裸跑 resolver"这一条路径，**仍不能**阻止 agent 直接 `cat .planning/.active_plan` 等；要全堵需广义拦截所有 `.active_plan`/非绑定目录读取（侵入大、易误伤），暂未做。
 
 ---
 

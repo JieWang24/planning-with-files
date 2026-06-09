@@ -22,6 +22,13 @@ BASH_TOOL_NAMES = {
     "functions.exec_command",
 }
 PLAN_CREATION_SCRIPT_NAMES = ("init-session.sh", "init-session.ps1")
+RESOLVER_INVOKE_RE = re.compile(
+    r"(?:^|[;&|`$(]\s*)"
+    r"(?:env\s+(?:\S+=\S+\s+)*)?"
+    r"(?:sh|bash|zsh|pwsh|powershell)\b[^\n;|&]*resolve-plan-dir\.(?:sh|ps1)\b"
+    r"|(?:^|[;&|`$(]\s*)(?:\.{0,2}/|~|\$HOME|/)[^\s;|&]*resolve-plan-dir\.(?:sh|ps1)\b",
+    re.MULTILINE,
+)
 
 
 def load_payload() -> dict[str, Any]:
@@ -99,6 +106,24 @@ def is_plan_creation_command(payload: dict[str, Any]) -> bool:
         return False
     command_text = command_text_from_payload(payload)
     return any(script_name in command_text for script_name in PLAN_CREATION_SCRIPT_NAMES)
+
+
+def is_bare_resolver_command(payload: dict[str, Any]) -> bool:
+    """True if a Bash command runs resolve-plan-dir.sh without a PLAN_ID.
+
+    The resolver is session-aware ONLY when PLAN_ID is set (the hook adapter
+    injects it). An agent running it in a plain shell has no PLAN_ID and falls
+    back to .planning/.active_plan — the wrong plan when several exist. Escape
+    hatches: pass an explicit PLAN_ID=<id>/$PLAN_ID, or PWF_ALLOW_BARE_RESOLVE=1.
+    """
+    if not is_bash_tool(payload):
+        return False
+    command_text = command_text_from_payload(payload)
+    if not RESOLVER_INVOKE_RE.search(command_text):
+        return False
+    if "PWF_ALLOW_BARE_RESOLVE=1" in command_text:
+        return False
+    return "PLAN_ID=" not in command_text and "$PLAN_ID" not in command_text
 
 
 def _normalize_mode(value: str) -> str:
