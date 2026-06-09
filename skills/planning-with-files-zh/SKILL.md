@@ -15,17 +15,19 @@ metadata:
 
 ## 第一步：恢复上下文（v2.2.0）
 
-**在做任何事之前**，先解析出本会话的计划目录并读取其中的文件：
+**在做任何事之前**，使用本会话的 canonical 计划文件。planning 钩子会在 SessionStart 和每次提交时注入它们的确切路径：
 
-1. 解析本会话对应的计划目录（会遵循「每会话绑定」）：
-
-```bash
-PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"
+```text
+[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
+  task_plan : <路径>
+  findings  : <路径>
+  progress  : <路径>
 ```
 
-   - 若 `PLAN_DIR` 非空，读取 `$PLAN_DIR/task_plan.md`、`$PLAN_DIR/progress.md`、`$PLAN_DIR/findings.md`。
-   - **仅当** `PLAN_DIR` 为空且存在旧版根目录 `./task_plan.md` 时，才读取根目录文件（向后兼容）。
-   - **只读取解析出的那份计划的文件。不要读取 `.planning/.active_plan` 或其他 `.planning/<目录>/`——那些属于别的会话。**
+1. 读取注入的这些路径（`task_plan.md`、`progress.md`、`findings.md`）。它们是 session-aware 的——钩子已为你设置 `PLAN_ID`。
+   - **不要自己跑 `resolve-plan-dir.sh`。** 普通 shell 里它没有 `PLAN_ID`，会回退到 `.planning/.active_plan`——有多个计划时就读错。
+   - **只读这些文件。不要读取 `.planning/.active_plan` 或其他 `.planning/<目录>/`——那些属于别的会话。**
+   - 若没有注入任何 canonical 路径、且你必须手动恢复：读根目录 `./task_plan.md`（若存在）；否则按下面"快速开始"新建一个计划。
 2. 然后检查上一个会话是否有未同步的上下文：
 
 ```bash
@@ -59,7 +61,7 @@ $(command -v python3 || command -v python) ${CLAUDE_PLUGIN_ROOT}/scripts/session
 在任何复杂任务之前：
 
 1. **创建计划目录** — 运行 `sh "${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh" --plan-dir "<任务名>"`。这会用模板创建 `.planning/<id>/{task_plan.md,findings.md,progress.md}` 并把当前会话绑定到它。
-2. **解析它** — `PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"`，然后只在 `$PLAN_DIR` 内工作。
+2. **用打印出的 `PLAN_ID`** — `init-session.sh` 会打印一行 `PLAN_ID=<id>`；只在 `.planning/<id>/` 内工作。不要自己跑 `resolve-plan-dir.sh`（普通 shell 没有 `PLAN_ID`，会错误回退）；后续轮次用钩子注入的 canonical 路径。
 3. **决策前重新读取计划** — 在注意力窗口中刷新目标。
 4. **每个阶段完成后更新** — 标记完成，记录错误。
 

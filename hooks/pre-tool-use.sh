@@ -17,6 +17,7 @@ fi
 
 TITLE=$(awk 'NF { sub(/^#[[:space:]]*/, ""); print; exit }' "$PLAN_FILE")
 [ -z "$TITLE" ] && TITLE="$PLAN_FILE"
-printf '[planning-with-files] Active plan: %s\n' "$TITLE"
-printf 'Re-read task_plan.md / findings.md if this command changes project state.\n'
+FINDINGS_FILE="${PLAN_DIR:+${PLAN_DIR}/}findings.md"
+printf '[planning-with-files] Active plan: %s (%s)\n' "$TITLE" "$PLAN_FILE"
+printf 'Re-read %s / %s if this command changes project state. Do not read other plans.\n' "$PLAN_FILE" "$FINDINGS_FILE"
 exit 0

@@ -77,8 +77,8 @@ exit 0
 
 把"在项目目录创建 task_plan.md"改为：
 1. 取一个 slug；
-2. 运行 `sh "<SKILL_ROOT>/scripts/init-session.sh" --plan-dir "<task name>"`（创建 `.planning/<date>-<slug>/...` 并自动绑定当前会话）；
-3. `PLAN_DIR="$(sh "<SKILL_ROOT>/scripts/resolve-plan-dir.sh")"`，**只在 `$PLAN_DIR` 内**读写三件套；
+2. 运行 `sh "<SKILL_ROOT>/scripts/init-session.sh" --plan-dir "<task name>"`（创建 `.planning/<date>-<slug>/...` 并自动绑定当前会话，且打印 `PLAN_ID=<id>`）；
+3. 从输出读 `PLAN_ID=<id>`，**只在 `.planning/<id>/` 内**读写三件套（**不要**自己跑 `resolve-plan-dir.sh`，见 §3）；
 4. 明确禁止：不要建根目录 `task_plan.md`、不要读 `.active_plan` 或别的计划目录。
 
 > `<SKILL_ROOT>` 在 Claude 插件里是 `${CLAUDE_PLUGIN_ROOT}`；Codex 端替换为其技能安装根（如 `~/.codex/skills/planning-with-files`）。中文命令同义改造（对应 Claude 端 `commands/plan-zh.md`）。
@@ -89,16 +89,16 @@ exit 0
 
 1. **「FIRST: Restore Context / 第一步：恢复上下文」**
    - 旧：`若 task_plan.md 存在，立即读取 task_plan.md/progress.md/findings.md`。
-   - 新：先 `PLAN_DIR="$(sh "<SKILL_ROOT>/scripts/resolve-plan-dir.sh")"`；
-     - `PLAN_DIR` 非空 → 读 `$PLAN_DIR/{task_plan,progress,findings}.md`；
-     - 仅当 `PLAN_DIR` 为空且存在根目录 `./task_plan.md` 时才读根目录（兼容）；
-     - **只读解析出的那份；不要读 `.active_plan` 或其他 `.planning/<dir>/`。**
+   - 新：优先用**钩子注入的 canonical 路径**（见 §3），只读写那几个文件；
+     - **不要**自己跑 `resolve-plan-dir.sh`（普通 shell 无 `PLAN_ID`，会错误回退到 `.active_plan`）；
+     - 仅当没有注入任何 canonical 路径时，才读根目录 `./task_plan.md`（兼容）；
+     - **不要读 `.active_plan` 或其他 `.planning/<dir>/`。**
 
 2. **「Important: Where Files Go / 重要：文件存放位置」**
    - 规划文件位置从「项目目录/项目根目录」改为「`.planning/<YYYY-MM-DD>-<slug>/`（每会话/计划隔离）」。表格行同改为 `<project>/.planning/<id>/`。
 
 3. **「Quick Start / 快速开始」**
-   - 从「创建 task_plan.md / findings.md / progress.md」改为：① `init-session.sh --plan-dir "<name>"` 建目录并绑定；② `resolve-plan-dir.sh` 解析后只在 `$PLAN_DIR` 内工作。
+   - 从「创建 task_plan.md / findings.md / progress.md」改为：① `init-session.sh --plan-dir "<name>"` 建目录并绑定；② 用它打印的 `PLAN_ID=<id>` 只在 `.planning/<id>/` 内工作（**不要**跑 `resolve-plan-dir.sh`，见 §3）。
    - 末尾 Note：规划文件在 `.planning/<id>/`，不在项目根目录；不要建根目录 `task_plan.md`。
 
 4. **「Critical Rule #1 / 关键规则 1」**
@@ -114,7 +114,24 @@ exit 0
 
 ---
 
-## 3. 验证（两端各跑一遍）
+## 3. Step 3（claude.4 关键修正 — Codex 端务必一并应用）
+
+**问题**：`resolve-plan-dir.sh` 解析顺序第一档是 `$PLAN_ID` 环境变量，而 **`PLAN_ID` 只有 Python 钩子适配器在调脚本前才注入**。agent 在普通 Bash 里**裸跑** `resolve-plan-dir.sh` 时没有 `PLAN_ID`（也不知道自己的 session_id），于是回退到 `.planning/.active_plan` —— **有多个计划时就解析错**。这正是 Codex 实测到的现象。
+
+**所以：不要让 agent 自己跑 `resolve-plan-dir.sh`。** 改用两处已经 session-aware 的信息：
+- **续接已有计划** → 用**钩子注入的 canonical 路径**（Step 1 那段）；它来自钩子、`PLAN_ID` 已注入，指向会话绑定的那份。
+- **新建计划** → 用 `init-session.sh --plan-dir` 打印的 **`PLAN_ID=<id>`** 行，直接用 `.planning/<id>/`。
+
+需要改的（对应 Claude 端 `2.43.0-claude.4`）：
+1. **§3.1** `/plan`(+中文)命令、SKILL「恢复上下文」「快速开始」：删掉"让 agent 跑 `resolve-plan-dir.sh`"的指示，改为上面两条；并明写"不要自己跑 resolve-plan-dir.sh，普通 shell 无 PLAN_ID 会错误回退"。
+2. **§3.2** `pre-tool-use.sh`：把"Re-read task_plan.md / findings.md"的**裸文件名**改成引用解析出的真实路径（`$PLAN_FILE` / `$FINDINGS_FILE`）。
+3. **§3.3** 渲染器 `user-prompt-submit.sh`：区分真绑定与回退 —— `$PLAN_ID` 非空时输出 `BOUND to plan dir`，否则 `RESOLVED via project default`。
+
+> 注：钩子内部仍照用 `resolve-plan-dir.sh`（适配器已注入 `PLAN_ID`，是 session-aware 的）。只是**禁止 agent 在普通 Bash 里手动跑它**。
+
+---
+
+## 4. 验证（两端各跑一遍）
 
 渲染器三态冒烟（在临时目录）：
 
@@ -131,13 +148,14 @@ sh -n <renderer>.sh   # 语法检查
 
 ---
 
-## 4. Parity 检查清单
+## 5. Parity 检查清单
 
-- [ ] 渲染脚本：加 `FINDINGS_FILE` + 点名路径 + (目录制)禁止串读行 —— 文本与 Claude 端逐字一致。
-- [ ] `/plan`(+中文) 命令：改为 `--plan-dir` + `resolve-plan-dir` + 禁止根目录/串读。
-- [ ] SKILL.md(英/中) 的 5 处：恢复上下文、文件位置、快速开始、规则1、本地定制条目。
+- [ ] 渲染脚本：加 `FINDINGS_FILE` + 点名路径 + (目录制)禁止串读行；区分 `BOUND` / `RESOLVED via default`（§3.3）—— 文本与 Claude 端逐字一致。
+- [ ] `/plan`(+中文) 命令：`--plan-dir` 建目录 + 用打印的 `PLAN_ID` + **禁止 agent 跑 `resolve-plan-dir.sh`**（§3）。
+- [ ] SKILL.md(英/中)：恢复上下文（用注入路径、禁手动 resolve）、文件位置、快速开始（用 `PLAN_ID`）、规则1、本地定制条目。
+- [ ] `pre-tool-use.sh`：裸文件名 → 解析出的真实路径（§3.2）。
 - [ ] 保留 legacy 根目录**只读** fallback，不新建。
-- [ ] 三态冒烟 + 双会话端到端通过。
+- [ ] 三态冒烟 + 双会话端到端通过（含：agent 裸跑 resolver 会错、改用注入路径/`PLAN_ID` 后正确）。
 - [ ] `.planning/` 数据为两端共享，未引入端特有的目录结构。
 
-> 参照实现：Claude 端 `claude` 分支版本 `2.43.0-claude.3`。可 `git show` 该版本对应提交，逐文件比对。
+> 参照实现：Claude 端 `claude` 分支版本 `2.43.0-claude.4`。可 `git show` 该版本对应提交，逐文件比对。

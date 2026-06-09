@@ -13,17 +13,19 @@ Work like Manus: Use persistent markdown files as your "working memory on disk."
 
 ## FIRST: Restore Context (v2.2.0)
 
-**Before doing anything else**, resolve THIS session's plan directory and read its files:
+**Before doing anything else**, use THIS session's canonical plan files. The planning hooks inject their exact paths at SessionStart and on each prompt:
 
-1. Resolve the canonical plan directory (honours per-session binding):
-
-```bash
-PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"
+```text
+[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
+  task_plan : <path>
+  findings  : <path>
+  progress  : <path>
 ```
 
-   - If `PLAN_DIR` is non-empty, read `$PLAN_DIR/task_plan.md`, `$PLAN_DIR/progress.md`, and `$PLAN_DIR/findings.md`.
-   - Only if `PLAN_DIR` is empty **and** a legacy root `./task_plan.md` exists, read the root files (back-compat).
-   - **Read ONLY the resolved plan's files. Do NOT read `.planning/.active_plan` or other `.planning/<dir>/` — those belong to other sessions.**
+1. Read those injected paths (`task_plan.md`, `progress.md`, `findings.md`). They are session-aware — the hook sets `PLAN_ID` for you.
+   - **Do NOT run `resolve-plan-dir.sh` yourself.** In a plain shell it has no `PLAN_ID` and falls back to `.planning/.active_plan` — the wrong plan when several exist.
+   - **Read ONLY those files. Do NOT read `.planning/.active_plan` or other `.planning/<dir>/` — those belong to other sessions.**
+   - If no canonical paths were injected and you must recover manually, read a legacy root `./task_plan.md` if present; otherwise create a plan (Quick Start below).
 2. Then check for unsynced context from a previous session:
 
 ```bash
@@ -57,7 +59,7 @@ If catchup report shows unsynced context:
 Before ANY complex task:
 
 1. **Create the plan directory** — run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh" --plan-dir "<task name>"`. This creates `.planning/<id>/{task_plan.md,findings.md,progress.md}` from the templates and binds this session to it.
-2. **Resolve it** — `PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"`, then work only inside `$PLAN_DIR`.
+2. **Use the printed `PLAN_ID`** — `init-session.sh` prints a `PLAN_ID=<id>` line; work only inside `.planning/<id>/`. Do NOT run `resolve-plan-dir.sh` yourself (no `PLAN_ID` in a plain shell → wrong fallback); on later turns use the hook-injected canonical paths.
 3. **Re-read the plan before decisions** — refreshes goals in attention window.
 4. **Update after each phase** — mark complete, log errors.
 

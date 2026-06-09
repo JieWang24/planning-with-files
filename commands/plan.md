@@ -13,15 +13,9 @@ Create the plan as a DEDICATED plan directory so this session is isolated from o
    sh "${CLAUDE_PLUGIN_ROOT}/scripts/init-session.sh" --plan-dir "<task name>"
    ```
 
-   This creates `.planning/<YYYY-MM-DD>-<slug>/{task_plan.md,findings.md,progress.md}` from the templates and auto-binds the current session to it.
-3. Resolve the directory and work ONLY inside it:
+   This creates `.planning/<YYYY-MM-DD>-<slug>/{task_plan.md,findings.md,progress.md}` from the templates, auto-binds the current session to it, and prints a `PLAN_ID=<id>` line. Note that id.
+3. Work ONLY inside that plan — read and update `.planning/<PLAN_ID>/task_plan.md`, `.planning/<PLAN_ID>/findings.md`, `.planning/<PLAN_ID>/progress.md`.
 
-   ```bash
-   PLAN_DIR="$(sh "${CLAUDE_PLUGIN_ROOT}/scripts/resolve-plan-dir.sh")"
-   ```
-
-   Read and update `$PLAN_DIR/task_plan.md`, `$PLAN_DIR/findings.md`, `$PLAN_DIR/progress.md`.
-
-Do NOT create or edit a root-level `task_plan.md`, and do NOT read `.planning/.active_plan` or other plan directories — they belong to other sessions.
+Do NOT create or edit a root-level `task_plan.md`, and do NOT read `.planning/.active_plan` or other plan directories — they belong to other sessions. **Do NOT run `resolve-plan-dir.sh` yourself** — in a plain shell it has no `PLAN_ID` and falls back to `.active_plan` (the wrong plan when several exist). On later turns, use the canonical plan-file paths the planning hooks inject.
 
 Then guide the user through the planning workflow.
