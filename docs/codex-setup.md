@@ -71,7 +71,7 @@ Use `session` only when you intentionally create `.planning/sessions/<session-id
 Always create new plans through the skill script:
 
 ```bash
-~/.codex/skills/planning-with-files/scripts/init-session.sh "Task Title"
+~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"
 ```
 
 Do not manually create `.planning/<plan-id>/` for new tasks.
@@ -140,7 +140,8 @@ If a session plan exists, it renders:
 
 - the first 50 lines of `task_plan.md`;
 - the last 20 lines of `progress.md`;
-- a reminder to read `findings.md`.
+- canonical `task_plan`, `findings`, and `progress` file paths for this session;
+- a warning not to read `.planning/.active_plan`, root-level `./task_plan.md`, or another `.planning/<dir>/` as current session context.
 
 If no session plan exists, it stays silent.
 
@@ -234,7 +235,7 @@ Create a smoke plan:
 
 ```bash
 cd /path/to/project
-~/.codex/skills/planning-with-files/scripts/init-session.sh "Migration Smoke Test"
+~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Migration Smoke Test"
 ```
 
 Then inspect:
@@ -267,7 +268,7 @@ python3 ~/.codex/tools/planning-hooks-mode.py on .
 This is expected until the session is bound. Run:
 
 ```bash
-~/.codex/skills/planning-with-files/scripts/init-session.sh "Task Title"
+~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"
 ```
 
 or continue in a session that already has `.planning/sessions/<session-id>.active_plan`.

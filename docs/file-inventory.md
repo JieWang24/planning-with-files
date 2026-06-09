@@ -81,6 +81,16 @@ tools/
 
 ## Project State
 
+## Documentation
+
+| File | Purpose |
+| --- | --- |
+| `docs/codex-setup.md` | Installation, migration, behavior, and troubleshooting guide. |
+| `docs/functional-spec.md` | Full Codex runtime behavior contract. |
+| `docs/codex-sync-step1-2.md` | Implementation note for canonical plan paths and directory-plan guidance synced from the Claude branch. |
+
+## Project State
+
 These files are generated in each project and are not stored in this repository:
 
 ```text

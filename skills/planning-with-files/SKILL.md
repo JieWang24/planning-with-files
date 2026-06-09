@@ -4,7 +4,7 @@ description: Implements Manus-style file-based planning to organize and track pr
 user-invocable: true
 allowed-tools: "Read Write Edit Bash Glob Grep"
 metadata:
-  version: "2.43.0-codex.1"
+  version: "2.43.0-codex.2"
 
 ---
 
@@ -12,13 +12,36 @@ metadata:
 
 Work like Manus: Use persistent markdown files as your "working memory on disk."
 
-## FIRST: Check for Previous Session (v2.2.0)
+## FIRST: Restore This Session's Context (v2.43.0-codex.2)
 
-**Before starting work**, check for unsynced context from a previous session:
+**Before doing anything else**, use the canonical plan files injected by the planning hooks when they are present:
+
+```text
+[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
+  task_plan : <path>
+  findings  : <path>
+  progress  : <path>
+```
+
+Read and update only those files for this session. Do not read `.planning/.active_plan`, a root-level `./task_plan.md`, or another `.planning/<dir>/` as current task context.
+
+If no canonical plan files were injected and you need to recover manually, resolve only the session-bound plan when available:
+
+```bash
+SKILL_ROOT="${CODEX_SKILL_ROOT:-$HOME/.codex/skills/planning-with-files}"
+PLAN_DIR="$(sh "$SKILL_ROOT/scripts/resolve-plan-dir.sh")"
+```
+
+- If `PLAN_DIR` is non-empty, read `$PLAN_DIR/task_plan.md`, `$PLAN_DIR/progress.md`, and `$PLAN_DIR/findings.md`.
+- Only if `PLAN_DIR` is empty and a legacy root `./task_plan.md` exists, read the root files for backward compatibility.
+- In a multi-session project, do not treat `.planning/.active_plan` as the current session task.
+
+Then check for unsynced context from a previous session:
 
 ```bash
 # Linux/macOS (auto-detects python3 or python)
-$(command -v python3 || command -v python) ~/.codex/skills/planning-with-files/scripts/session-catchup.py "$(pwd)"
+SKILL_ROOT="${CODEX_SKILL_ROOT:-$HOME/.codex/skills/planning-with-files}"
+$(command -v python3 || command -v python) "$SKILL_ROOT/scripts/session-catchup.py" "$(pwd)"
 ```
 
 ```powershell
@@ -35,40 +58,41 @@ If catchup report shows unsynced context:
 ## Important: Where Files Go
 
 - **Templates** are in `~/.codex/skills/planning-with-files/templates/`
-- **Your planning files** go in **your project directory**
+- **Your planning files** go in a dedicated plan directory under your project: `.planning/<YYYY-MM-DD>-<slug>/`
 
 | Location | What Goes There |
 |----------|-----------------|
 | Skill directory (`~/.codex/skills/planning-with-files/`) | Templates, scripts, reference docs |
-| Your project directory | `.planning/<plan-id>/task_plan.md`, `.planning/<plan-id>/findings.md`, `.planning/<plan-id>/progress.md` |
+| `<project>/.planning/<id>/` | `task_plan.md`, `findings.md`, `progress.md` for this session's plan |
 
 ## Quick Start
 
 Before ANY complex task:
 
-1. **Create the task with the script** — Run `~/.codex/skills/planning-with-files/scripts/init-session.sh "Task Title"` from the project root.
-2. **Use the generated files** — Work in the created `.planning/<plan-id>/task_plan.md`, `findings.md`, and `progress.md`.
+1. **Create the plan directory** — Run `~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"` from the project root. This creates `.planning/<id>/{task_plan.md,findings.md,progress.md}` and lets the Codex `PostToolUse` hook bind this session to it.
+2. **Use the canonical files** — Work only in the hook-injected canonical files, or resolve the plan dir and work only inside `$PLAN_DIR`.
 3. **Re-read plan before decisions** — Refreshes goals in attention window.
 4. **Update after each phase** — Mark complete, log errors.
 
-> **Note:** Planning files go in your project root, not the skill installation folder.
+> **Note:** Planning files live in `.planning/<id>/`, not the project root and not the skill installation folder. Do not create a root-level `task_plan.md`.
 
 ## Script-First Task Creation Contract
 
 New planning tasks MUST be created through the bundled initialization script:
 
 ```bash
-~/.codex/skills/planning-with-files/scripts/init-session.sh "Task Title"
+~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"
 ```
 
 Do not manually create `.planning/<plan-id>/`, `task_plan.md`, `findings.md`, or `progress.md` for a new task. The script is the canonical creation boundary: it creates the files, records `.planning/.active_plan`, and gives project hooks one precise moment to bind the current Codex session to the new plan.
 
 New Codex sessions do not automatically bind themselves to the project `.planning/.active_plan`. A session receives planning context only after it has been explicitly bound by running the creation script above, or when an existing `.planning/sessions/<session-id>.active_plan` already exists for that session.
 
-When continuing an existing task, read the current task through the session-aware resolver, not by reading `.planning/.active_plan` directly:
+When continuing an existing task, prefer the canonical file paths injected by the hooks. If you must resolve manually, resolve a plan directory and then read only that directory's files:
 
 ```bash
-PLAN_DIR="$(sh ~/.codex/hooks/resolve-plan-dir.sh)"
+SKILL_ROOT="${CODEX_SKILL_ROOT:-$HOME/.codex/skills/planning-with-files}"
+PLAN_DIR="$(sh "$SKILL_ROOT/scripts/resolve-plan-dir.sh)"
 ```
 
 Then read `$PLAN_DIR/task_plan.md`, `$PLAN_DIR/findings.md`, and `$PLAN_DIR/progress.md`.
@@ -93,7 +117,7 @@ Filesystem = Disk (persistent, unlimited)
 ## Critical Rules
 
 ### 1. Create Plan First
-Never start a complex task without `task_plan.md`. Non-negotiable.
+Never start a complex task without a plan. Create it as `.planning/<id>/task_plan.md` via `init-session.sh --plan-dir`, not as a root-level file. Non-negotiable.
 
 ### 2. The 2-Action Rule
 > "After every 2 view/browser/search operations, IMMEDIATELY save key findings to text files."
@@ -201,8 +225,17 @@ Copy these templates to start:
 Helper scripts for automation:
 
 - `scripts/init-session.sh` — Initialize all planning files
+- `scripts/resolve-plan-dir.sh` — Resolve the plan directory. Checks `$PLAN_ID` first, then `.planning/.active_plan`, then newest plan dir, then legacy root mode. Hook-injected canonical paths are safer than manual resolver calls in multi-session projects.
 - `scripts/check-complete.sh` — Verify all phases complete
 - `scripts/session-catchup.py` — Recover context from previous session (v2.2.0)
+
+## Codex Local Customizations
+
+- **Project-level hooks** — Runtime hooks are registered through project `.codex/hooks.json`, not this `SKILL.md` frontmatter.
+- **Per-session plan binding** — Each Codex session can bind to its own `.planning/sessions/<session-id>.active_plan`. Hook context reads that session plan and injects canonical plan file paths.
+- **Canonical path injection** — When hooks inject a plan, read and update only the listed `task_plan`, `findings`, and `progress` files. Do not read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or another `.planning/<dir>/`.
+- **Temporary-task suppression** — If your prompt contains `临时任务`, planning hooks stay silent for that turn and clear on `Stop`.
+- **Gating** — `.planning/.hooks_mode` (`on`, `off`, `session`) or `PWF_HOOKS` controls whether planning hooks fire. Default project registration writes `on`.
 
 ## Advanced Topics
 
@@ -220,5 +253,7 @@ Helper scripts for automation:
 | Start executing immediately | Create plan file FIRST |
 | Repeat failed actions | Track attempts, mutate approach |
 | Create files in skill directory | Create files in your project |
-| Manually create a new `.planning/<plan-id>/` task | Run `scripts/init-session.sh "Task Title"` |
-| Read `.planning/.active_plan` as the current task | Resolve the session plan through `resolve-plan-dir.sh` |
+| Create root-level `task_plan.md` for a new task | Run `scripts/init-session.sh --plan-dir "Task Title"` |
+| Manually create a new `.planning/<plan-id>/` task | Run `scripts/init-session.sh --plan-dir "Task Title"` |
+| Read `.planning/.active_plan` as the current task | Use the hook-injected canonical files for this session |
+| Read another `.planning/<dir>/` because it looks recent | Stay inside the canonical plan dir listed by the hook |

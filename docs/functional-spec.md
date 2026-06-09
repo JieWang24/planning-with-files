@@ -77,7 +77,7 @@ When no session id is available, the temporary marker falls back to:
 New planning tasks are script-first. A new task must be created by:
 
 ```bash
-~/.codex/skills/planning-with-files/scripts/init-session.sh "Task Title"
+~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"
 ```
 
 or on PowerShell:
@@ -100,6 +100,17 @@ After binding, hook context comes from:
 
 If a session has no session plan, the Python adapters stay silent for `SessionStart`, `UserPromptSubmit`, `Stop`, and `PermissionRequest`.
 
+When hook context is injected, it explicitly names the canonical files for that session:
+
+```text
+[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
+  task_plan : <path>
+  findings  : <path>
+  progress  : <path>
+```
+
+Agents should read and update only those paths. In directory-plan mode, the injected text also forbids reading or editing `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/` as current session context.
+
 All hook adapters fail open. Hook errors are swallowed by `main_guard`, so a planning hook failure should not break ordinary Codex tool usage.
 
 ## Skill Contract
@@ -110,7 +121,7 @@ The skill entrypoint is:
 skills/planning-with-files/SKILL.md
 ```
 
-The skill explains when to use file-based planning and requires script-first task creation.
+The skill explains when to use file-based planning, requires script-first task creation with `--plan-dir`, and instructs agents to use hook-injected canonical file paths for the current session.
 
 The skill frontmatter intentionally does not declare active hooks. Runtime hooks are registered at the project level through `.codex/hooks.json`. This avoids stale root-level `task_plan.md` behavior and keeps all hook execution under the customized session-plan flow.
 
@@ -245,7 +256,7 @@ The transcript UUID is preferred because it is stable for a Codex session. Turn-
 Run from the project root:
 
 ```bash
-~/.codex/skills/planning-with-files/scripts/init-session.sh "Task Title"
+~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"
 ```
 
 The script:
@@ -347,7 +358,10 @@ Rendered context includes:
 1. A planning header.
 2. The first 50 lines of `task_plan.md`.
 3. The last 20 lines of `progress.md`.
-4. A reminder to read `findings.md`.
+4. `===BEGIN PLAN DATA===` / `===END PLAN DATA===` framing so plan content is treated as data.
+5. Canonical `task_plan`, `findings`, and `progress` paths for this session.
+6. In directory-plan mode, a warning not to read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/`.
+7. If a plan attestation exists, `Plan-SHA256`; if the hash mismatches, plan injection is blocked with a tamper warning.
 
 ### `pre_tool_use.py`
 
@@ -535,9 +549,9 @@ A migrated machine is equivalent when all of these are true:
 4. `~/.codex/tools/planning-hooks-mode.py` matches `tools/planning-hooks-mode.py`.
 5. A fresh registered project gets `.planning/.hooks_mode=on`.
 6. A fresh registered project's `.codex/hooks.json` matches `hooks/hooks.json`.
-7. Running `init-session.sh "Smoke Test"` creates `.planning/<plan-id>/`.
+7. Running `init-session.sh --plan-dir "Smoke Test"` creates `.planning/<plan-id>/`.
 8. Simulated `PostToolUse` for that Bash command writes `.planning/sessions/<session-id>.active_plan`.
-9. Simulated `UserPromptSubmit` with that session id emits only the session plan context.
+9. Simulated `UserPromptSubmit` with that session id emits the session plan context plus canonical file paths and anti cross-plan-read warning.
 10. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
 
 ## Verification Checklist
@@ -584,9 +598,9 @@ sid="019e6fff-2222-7333-8444-abcdefabcdef"
 
 CODEX_HOME="$tmp_home" ./install.sh --register "$tmp_project"
 cd "$tmp_project"
-"$tmp_home/skills/planning-with-files/scripts/init-session.sh" "Default Mode Smoke Test"
+"$tmp_home/skills/planning-with-files/scripts/init-session.sh" --plan-dir "Default Mode Smoke Test"
 
-printf '{"cwd":"%s","transcript_path":"/tmp/rollout-%s.jsonl","tool_name":"Bash","tool_input":{"cmd":"%s/skills/planning-with-files/scripts/init-session.sh Default Mode Smoke Test"}}\n' \
+printf '{"cwd":"%s","transcript_path":"/tmp/rollout-%s.jsonl","tool_name":"Bash","tool_input":{"cmd":"%s/skills/planning-with-files/scripts/init-session.sh --plan-dir Default Mode Smoke Test"}}\n' \
   "$tmp_project" "$sid" "$tmp_home" |
   python3 "$tmp_home/hooks/post_tool_use.py"
 
