@@ -320,6 +320,8 @@ Then `hooks/resolve-plan-dir.sh` resolves in this order:
 
 For hook-driven context, step 1 is the intended path. The fallback paths exist for manual debugging and legacy shell usage.
 
+The resolver is not session-aware in ordinary Bash unless the caller explicitly sets `PLAN_ID`. Agent-facing instructions must not tell agents to run it bare as a current-session resolver.
+
 ## Hook Adapter Behavior
 
 ### `session_start.py`
@@ -381,8 +383,8 @@ This hook is intentionally quiet. It exists so the creation flow can be detected
 The shell renderer `pre-tool-use.sh` still contains the short reminder form:
 
 ```text
-[planning-with-files] Active plan: <title>
-Read task_plan.md/findings.md if this Bash command changes project state.
+[planning-with-files] Active plan: <title> (<task_plan_path>)
+Re-read <task_plan_path> / <findings_path> if this Bash command changes project state. Do not read other plans.
 ```
 
 The current Python adapter does not call that renderer for normal commands.
@@ -512,7 +514,7 @@ If `.planning/.active_plan` later changes, existing session bindings do not chan
 
 ## Existing Task Continuation
 
-To manually inspect the session-bound task:
+For normal agent work, continue from the hook-injected canonical file paths. For manual debugging only, a human can inspect a known session-bound task by explicitly providing its plan id:
 
 ```bash
 PLAN_ID="$(cat .planning/sessions/<session-id>.active_plan)"
@@ -523,6 +525,8 @@ tail -80 "$PLAN_DIR/progress.md"
 ```
 
 Do not rely on `.planning/.active_plan` as the current task in a multi-session project.
+
+Do not run `resolve-plan-dir.sh` bare as a session resolver. Without `PLAN_ID`, it can fall back to the project default.
 
 ## Completion Semantics
 
@@ -552,7 +556,8 @@ A migrated machine is equivalent when all of these are true:
 7. Running `init-session.sh --plan-dir "Smoke Test"` creates `.planning/<plan-id>/`.
 8. Simulated `PostToolUse` for that Bash command writes `.planning/sessions/<session-id>.active_plan`.
 9. Simulated `UserPromptSubmit` with that session id emits the session plan context plus canonical file paths and anti cross-plan-read warning.
-10. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
+10. Bare `resolve-plan-dir.sh` may return the project default, while `PLAN_ID=<session-plan-id> resolve-plan-dir.sh` returns the session plan.
+11. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
 
 ## Verification Checklist
 
@@ -617,7 +622,7 @@ on
 
 ## Known Boundaries
 
-The hook system cannot force an agent to read the session-aware resolver if the agent manually opens `.planning/.active_plan`. Project instructions should explicitly say to use the resolver or session plan.
+The hook system cannot force an agent to avoid manual reads if it opens `.planning/.active_plan` or runs `resolve-plan-dir.sh` bare. Project instructions should explicitly say to use hook-injected canonical files or the `PLAN_ID` printed by `init-session.sh --plan-dir`.
 
 `PreToolUse` is intentionally quiet for normal Bash commands. The active reminder is currently emitted by `PostToolUse` after Bash when a session plan exists.
 

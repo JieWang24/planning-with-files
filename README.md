@@ -61,6 +61,8 @@ The script creates:
 .planning/.active_plan
 ```
 
+It also prints `PLAN_ID=<plan-id>`. Immediately after creation, use that id and work only inside `.planning/<PLAN_ID>/`.
+
 After the Bash command finishes, `PostToolUse` binds the current Codex session to the new plan:
 
 ```text
@@ -79,6 +81,8 @@ When a session plan exists, hook output names the canonical files for this sessi
 ```
 
 Read and update only those files. Do not read `.planning/.active_plan`, a root-level `./task_plan.md`, or another `.planning/<dir>/` as current task context.
+
+Do not run `resolve-plan-dir.sh` yourself as a session resolver in ordinary Bash. It is session-aware inside hooks because the Python adapter injects `PLAN_ID`; bare shell calls can fall back to `.planning/.active_plan`.
 
 ## Hook Behavior Summary
 
@@ -134,4 +138,4 @@ Use this for one-off questions or simple commands that should not activate plann
 8. Confirm `.planning/sessions/<session-id>.active_plan` points to the new plan.
 9. Confirm subsequent prompts render the session plan, not the project `.active_plan`.
 
-See [docs/codex-setup.md](docs/codex-setup.md) for setup, [docs/functional-spec.md](docs/functional-spec.md) for the full runtime contract, and [docs/codex-sync-step1-2.md](docs/codex-sync-step1-2.md) for the anti cross-plan-read sync note.
+See [docs/codex-setup.md](docs/codex-setup.md) for setup, [docs/functional-spec.md](docs/functional-spec.md) for the full runtime contract, and [docs/codex-sync-step1-2.md](docs/codex-sync-step1-2.md) for the anti cross-plan-read Step 1/2/3 sync note.

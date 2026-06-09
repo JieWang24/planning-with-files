@@ -85,6 +85,8 @@ The script creates:
 .planning/.active_plan
 ```
 
+It also prints `PLAN_ID=<plan-id>`. Immediately after creation, use that id and work only inside `.planning/<PLAN_ID>/`.
+
 After the Bash tool call finishes, `PostToolUse` sees `init-session.sh` in the command text and binds the current Codex session to the current project active plan:
 
 ```text
@@ -119,7 +121,9 @@ into the shell hook subprocess.
 
 For hook-driven context, step 1 is always used when a session plan exists. If no session plan exists, the Python adapter returns before calling shell hooks, so the shell fallback to `.active_plan` is not used by `SessionStart`, `UserPromptSubmit`, `Stop`, or `PermissionRequest`.
 
-For manual debugging, prefer:
+Do not run `resolve-plan-dir.sh` bare in ordinary agent Bash as a session resolver. Bare shell has no hook-injected `PLAN_ID`, so the resolver can fall back to `.planning/.active_plan` and read another session's plan.
+
+For manual debugging only, explicitly provide the session plan id:
 
 ```bash
 PLAN_ID="$(cat .planning/sessions/<session-id>.active_plan)"
@@ -277,12 +281,12 @@ or continue in a session that already has `.planning/sessions/<session-id>.activ
 
 Older versions could create session files from turn-level ids. They are historical leftovers. Current hook context prefers the stable session id parsed from the Codex transcript path.
 
-### The agent reads `.planning/.active_plan` manually
+### The agent reads `.planning/.active_plan` or bare `resolve-plan-dir.sh` manually
 
-The hook path does not do this once session binding exists, but an agent can still manually read that file. Project instructions should say:
+The hook path does not do this once session binding exists, but an agent can still manually read that file or run the resolver without `PLAN_ID`. Project instructions should say:
 
 ```text
-Read the current task through the session-aware resolver, not by reading .planning/.active_plan directly.
+Use the hook-injected canonical plan files for this session. Do not read .planning/.active_plan, another .planning/<dir>/, or run resolve-plan-dir.sh bare as a session resolver.
 ```
 
 ## Updating This Repository From A Live Machine
