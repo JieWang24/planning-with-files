@@ -77,16 +77,13 @@ When `CODEX_THREAD_ID` or `PWF_SESSION_ID` is available, `init-session.sh` immed
 
 `SessionStart`, `UserPromptSubmit`, `Stop`, and `PermissionRequest` read only the session plan. They do not fall back to `.planning/.active_plan` when no session plan exists.
 
-When a session plan exists, hook output names the canonical files for this session:
+When a session plan exists, prompt/startup hook output renders compact plan context and names the bound plan directory:
 
 ```text
-[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
-  task_plan : <path>
-  findings  : <path>
-  progress  : <path>
+[planning-with-files] This session is BOUND to plan dir: <path>
 ```
 
-Read and update only those files. Do not read `.planning/.active_plan`, a root-level `./task_plan.md`, or another `.planning/<dir>/` as current task context.
+Read and update `task_plan.md`, `findings.md`, and `progress.md` inside that bound plan directory. Do not read `.planning/.active_plan`, a root-level `./task_plan.md`, or another `.planning/<dir>/` as current task context.
 
 Do not run `resolve-plan-dir.sh` yourself as a session resolver in ordinary Bash. It is session-aware inside hooks because the Python adapter injects `PLAN_ID`; bare shell calls can fall back to `.planning/.active_plan`.
 
@@ -95,9 +92,9 @@ Do not run `resolve-plan-dir.sh` yourself as a session resolver in ordinary Bash
 | Hook | Current behavior |
 | --- | --- |
 | `SessionStart` | If the current session has a session plan, render that plan context. Otherwise stay silent. |
-| `UserPromptSubmit` | If prompt contains `临时任务`, temporarily disables planning hooks for that turn. Otherwise renders session-plan context plus canonical file paths when bound. |
+| `UserPromptSubmit` | If prompt contains `临时任务`, temporarily disables planning hooks for that turn. Otherwise renders compact session-plan context plus the bound plan directory when bound. |
 | `PreToolUse` | Bash-only. Records the active plan before `init-session` and blocks bare `resolve-plan-dir.sh` / `.ps1` calls without `PLAN_ID`. |
-| `PostToolUse` | If Bash command created a plan with `init-session`, validates or backfills session binding. Otherwise, if session plan exists, reminds the agent to update the canonical `progress.md` and phase status paths. |
+| `PostToolUse` | If Bash command created a plan with `init-session`, validates or backfills session binding. Otherwise, if session plan exists, gives a short reminder to update `progress.md` and phase status. |
 | `Stop` | Checks only the session plan for completion. Blocks incomplete tasks unless Codex reports the stop hook is already active. |
 | `PermissionRequest` | If session plan exists, reminds the user to review current phase before approving. |
 

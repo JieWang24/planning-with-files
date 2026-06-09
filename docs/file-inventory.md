@@ -90,7 +90,7 @@ tools/
 | --- | --- |
 | `docs/codex-setup.md` | Installation, migration, behavior, and troubleshooting guide. |
 | `docs/functional-spec.md` | Full Codex runtime behavior contract. |
-| `docs/codex-sync-step1-2.md` | Implementation note for canonical plan paths, directory-plan guidance, and the resolver boundary synced from the Claude branch. |
+| `docs/codex-sync-step1-2.md` | Implementation note for compact bound-plan context, directory-plan guidance, and the resolver boundary synced from the Claude branch. |
 
 ## Project State
 

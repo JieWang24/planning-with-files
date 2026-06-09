@@ -146,10 +146,9 @@ If the prompt includes `临时任务`, it creates a session-scoped temporary-off
 
 If a session plan exists, it renders:
 
-- the first 50 lines of `task_plan.md`;
-- the last 20 lines of `progress.md`;
-- canonical `task_plan`, `findings`, and `progress` file paths for this session;
-- a warning not to read `.planning/.active_plan`, root-level `./task_plan.md`, or another `.planning/<dir>/` as current session context.
+- the first 30 lines of `task_plan.md`;
+- the last 12 lines of `progress.md`;
+- the bound plan directory for this session;
 
 If no session plan exists, it stays silent.
 
@@ -178,8 +177,8 @@ If the command contains `init-session.sh` or `init-session.ps1`, it validates or
 If the command is not a plan-creation command and a session plan exists, it prints:
 
 ```text
-[planning-with-files] Session plan: <plan-dir>
-[planning-with-files] Update <plan-dir>/progress.md with what you just did. If a phase is now complete, update <plan-dir>/task_plan.md status.
+[planning-with-files] Update progress.md with what you just did. If a phase is now complete, update task_plan.md status.
+[codex-scholar] For KB edits, route project-owned ideas/specs to Designs/ before Experiments/, Results/, or paper claims.
 ```
 
 If no session plan exists, it stays silent.
@@ -352,7 +351,7 @@ Older versions could create session files from turn-level ids. They are historic
 The hook path does not do this once session binding exists. `PreToolUse` blocks a known bare resolver Bash call while planning hooks are active, but an agent can still manually read `.planning/.active_plan` or inspect another directory. Project instructions should say:
 
 ```text
-Use the hook-injected canonical plan files for this session. Do not read .planning/.active_plan, another .planning/<dir>/, or run resolve-plan-dir.sh bare as a session resolver.
+Use the hook-injected bound plan directory for this session. Do not read .planning/.active_plan, another .planning/<dir>/, or run resolve-plan-dir.sh bare as a session resolver.
 ```
 
 ## Updating This Repository From A Live Machine

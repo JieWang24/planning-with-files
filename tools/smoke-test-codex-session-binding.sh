@@ -65,13 +65,17 @@ CODEX_THREAD_ID="$THREAD_ID" "$PYTHON_BIN" "${REPO_ROOT}/hooks/post_tool_use.py"
 require_file "${PROJECT_DIR}/.planning/sessions/${THREAD_ID}.active_plan"
 require_absent "${PROJECT_DIR}/.planning/sessions/${TURN_ID}.active_plan"
 
-echo "[4/7] UserPromptSubmit emits additionalContext with canonical session paths"
+echo "[4/7] UserPromptSubmit emits compact additionalContext with bound plan dir"
 cat > /tmp/pwf-smoke-user.json <<EOF
 {"cwd":"${PROJECT_DIR}","prompt":"continue this planned task","turn_id":"${TURN_ID}"}
 EOF
 CODEX_THREAD_ID="$THREAD_ID" "$PYTHON_BIN" "${REPO_ROOT}/hooks/user_prompt_submit.py" </tmp/pwf-smoke-user.json >/tmp/pwf-smoke-user.out
 require_grep "hookSpecificOutput" /tmp/pwf-smoke-user.out
-require_grep "${PROJECT_DIR}/.planning/${PLAN_ID}/task_plan.md" /tmp/pwf-smoke-user.out
+require_grep "${PROJECT_DIR}/.planning/${PLAN_ID}" /tmp/pwf-smoke-user.out
+if grep -q "CANONICAL PLAN FILES" /tmp/pwf-smoke-user.out; then
+    cat /tmp/pwf-smoke-user.out >&2
+    fail "compact prompt context still includes canonical file list"
+fi
 require_absent "${PROJECT_DIR}/.planning/sessions/${TURN_ID}.active_plan"
 
 echo "[5/7] transcript_path beats turn_id when no CODEX_THREAD_ID exists"
@@ -97,7 +101,7 @@ if grep -q "Session plan bound to" /tmp/pwf-smoke-noid-post.out; then
 fi
 require_absent "${PROJECT_DIR}/.planning/sessions"
 
-echo "[7/7] Guards and stop reminder use session-bound paths"
+echo "[7/7] Guards work and stop reminder stays compact"
 mkdir -p "${PROJECT_DIR}/.planning/sessions"
 printf "%s\n" "$PLAN_ID" > "${PROJECT_DIR}/.planning/sessions/${THREAD_ID}.active_plan"
 printf "attached\n" > "${PROJECT_DIR}/.planning/sessions/${THREAD_ID}.attached"
@@ -120,7 +124,11 @@ cat > /tmp/pwf-smoke-stop.json <<EOF
 {"cwd":"${PROJECT_DIR}"}
 EOF
 CODEX_THREAD_ID="$THREAD_ID" "$PYTHON_BIN" "${REPO_ROOT}/hooks/stop.py" </tmp/pwf-smoke-stop.json >/tmp/pwf-smoke-stop.out
-require_grep "${PROJECT_DIR}/.planning/${PLAN_ID}/task_plan.md" /tmp/pwf-smoke-stop.out
+require_grep "task_plan.md" /tmp/pwf-smoke-stop.out
+if grep -q "${PROJECT_DIR}/.planning/${PLAN_ID}/task_plan.md" /tmp/pwf-smoke-stop.out; then
+    cat /tmp/pwf-smoke-stop.out >&2
+    fail "stop reminder still includes absolute task_plan path"
+fi
 
 echo "[OK] planning-with-files Codex session binding smoke test passed"
 echo "Project: $PROJECT_DIR"

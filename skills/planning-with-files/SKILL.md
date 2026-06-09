@@ -14,19 +14,16 @@ Work like Manus: Use persistent markdown files as your "working memory on disk."
 
 ## FIRST: Restore This Session's Context (v2.44.0-codex.0)
 
-**Before doing anything else**, use THIS session's canonical plan files. The planning hooks inject their exact paths at SessionStart and on each prompt:
+**Before doing anything else**, use THIS session's bound plan directory. The planning hooks inject compact plan context at SessionStart and on each prompt:
 
 ```text
-[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
-  task_plan : <path>
-  findings  : <path>
-  progress  : <path>
+[planning-with-files] This session is BOUND to plan dir: <path>
 ```
 
-1. Read those injected paths (`task_plan.md`, `progress.md`, `findings.md`). They are session-aware because the hook adapter sets `PLAN_ID` before rendering them.
+1. Read `task_plan.md`, `progress.md`, and `findings.md` inside that injected plan directory. It is session-aware because the hook adapter sets `PLAN_ID` before rendering it.
    - **Do NOT run `resolve-plan-dir.sh` yourself.** In a plain shell it has no `PLAN_ID` and falls back to `.planning/.active_plan`, which is the wrong plan when several exist.
-   - **Read ONLY those files. Do NOT read `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/`; those belong to other sessions or legacy fallback.**
-   - If no canonical paths were injected and you must recover manually, read a legacy root `./task_plan.md` only if it exists; otherwise create a plan with Quick Start below.
+   - **Read ONLY files in the injected plan dir. Do NOT read `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/`; those belong to other sessions or legacy fallback.**
+   - If no bound plan dir was injected and you must recover manually, read a legacy root `./task_plan.md` only if it exists; otherwise create a plan with Quick Start below.
 
 Then check for unsynced context from a previous session:
 
@@ -62,7 +59,7 @@ If catchup report shows unsynced context:
 Before ANY complex task:
 
 1. **Create the plan directory** — Run `~/.codex/skills/planning-with-files/scripts/init-session.sh --plan-dir "Task Title"` from the project root. This creates `.planning/<id>/{task_plan.md,findings.md,progress.md}`, prints `PLAN_ID=<id>`, updates `.planning/.active_plan`, and atomically binds the current Codex session when `CODEX_THREAD_ID` or `PWF_SESSION_ID` is available.
-2. **Use the printed `PLAN_ID`** — Work only inside `.planning/<PLAN_ID>/` immediately after creation. Do NOT run `resolve-plan-dir.sh` yourself; plain shell has no hook-injected `PLAN_ID` and can fall back to the wrong `.active_plan`. On later turns, use the hook-injected canonical paths.
+2. **Use the printed `PLAN_ID`** — Work only inside `.planning/<PLAN_ID>/` immediately after creation. Do NOT run `resolve-plan-dir.sh` yourself; plain shell has no hook-injected `PLAN_ID` and can fall back to the wrong `.active_plan`. On later turns, use the hook-injected bound plan dir.
 3. **Re-read plan before decisions** — Refreshes goals in attention window.
 4. **Update after each phase** — Mark complete, log errors.
 
@@ -82,7 +79,7 @@ New Codex sessions do not treat the project `.planning/.active_plan` as current 
 
 The stable session id is resolved from `PWF_SESSION_ID`, `CODEX_THREAD_ID`, transcript UUID, or other stable conversation/session fields. `turn_id` is ignored by default because Codex can create multiple turn ids inside one conversation.
 
-When continuing an existing task, use the canonical file paths injected by the hooks. Do not manually run `resolve-plan-dir.sh` in a normal Bash command as a session resolver; without hook-injected `PLAN_ID`, it can read the project default instead of this session's plan.
+When continuing an existing task, use the bound plan directory injected by the hooks. Do not manually run `resolve-plan-dir.sh` in a normal Bash command as a session resolver; without hook-injected `PLAN_ID`, it can read the project default instead of this session's plan.
 
 ## The Core Pattern
 
@@ -219,9 +216,9 @@ Helper scripts for automation:
 ## Codex Local Customizations
 
 - **Project-level hooks** — Runtime hooks are registered through project `.codex/hooks.json`, not this `SKILL.md` frontmatter.
-- **Per-session plan binding** — Each Codex session can bind to its own `.planning/sessions/<session-id>.active_plan`. Hook context reads that session plan and injects canonical plan file paths.
+- **Per-session plan binding** — Each Codex session can bind to its own `.planning/sessions/<session-id>.active_plan`. Hook context reads that session plan and injects the bound plan directory plus compact plan excerpts.
 - **Atomic init-session binding** — `init-session.sh --plan-dir` writes the session plan immediately when `CODEX_THREAD_ID` or `PWF_SESSION_ID` is present; `PostToolUse` only validates or backfills binding.
-- **Canonical path injection** — When hooks inject a plan, read and update only the listed `task_plan`, `findings`, and `progress` files. Do not read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or another `.planning/<dir>/`.
+- **Bound plan dir injection** — When hooks inject a plan, read and update only `task_plan.md`, `findings.md`, and `progress.md` inside the bound plan directory. Do not read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or another `.planning/<dir>/`.
 - **Resolver boundary** — `resolve-plan-dir.sh` is session-aware only inside hooks because the Python adapter injects `PLAN_ID`. In ordinary Bash, do not run it without an explicit `PLAN_ID`.
 - **PreToolUse guard** — Bare `resolve-plan-dir.sh` calls are blocked while planning hooks are active. Use hook-injected paths or explicitly set `PLAN_ID`.
 - **Temporary-task suppression** — If your prompt contains `临时任务`, planning hooks stay silent for that turn and clear on `Stop`.
@@ -246,6 +243,6 @@ Helper scripts for automation:
 | Create files in skill directory | Create files in your project |
 | Create root-level `task_plan.md` for a new task | Run `scripts/init-session.sh --plan-dir "Task Title"` |
 | Manually create a new `.planning/<plan-id>/` task | Run `scripts/init-session.sh --plan-dir "Task Title"` |
-| Read `.planning/.active_plan` as the current task | Use the hook-injected canonical files for this session |
-| Run `resolve-plan-dir.sh` manually to find this session's task | Use hook-injected canonical files, or use the `PLAN_ID` printed by `init-session.sh --plan-dir` |
-| Read another `.planning/<dir>/` because it looks recent | Stay inside the canonical plan dir listed by the hook |
+| Read `.planning/.active_plan` as the current task | Use the hook-injected bound plan dir for this session |
+| Run `resolve-plan-dir.sh` manually to find this session's task | Use the hook-injected bound plan dir, or use the `PLAN_ID` printed by `init-session.sh --plan-dir` |
+| Read another `.planning/<dir>/` because it looks recent | Stay inside the bound plan dir listed by the hook |

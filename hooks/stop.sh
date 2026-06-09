@@ -4,7 +4,6 @@
 HOOK_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
 PLAN_DIR="$(sh "${HOOK_DIR}/resolve-plan-dir.sh" 2>/dev/null)"
 PLAN_FILE="${PLAN_DIR:+${PLAN_DIR}/}task_plan.md"
-PROGRESS_FILE="${PLAN_DIR:+${PLAN_DIR}/}progress.md"
 
 if [ ! -f "$PLAN_FILE" ]; then
     exit 0
@@ -76,9 +75,9 @@ fi
 : "${PENDING:=0}"
 
 if [ "$COMPLETE" -eq "$TOTAL" ] && [ "$TOTAL" -gt 0 ]; then
-    echo "{\"followup_message\": \"[planning-with-files] ALL PHASES COMPLETE ($COMPLETE/$TOTAL). Plan: $PLAN_FILE. If the user has additional work, add new phases there before starting.\"}"
+    echo "{\"followup_message\": \"[planning-with-files] ALL PHASES COMPLETE ($COMPLETE/$TOTAL). If the user has additional work, add new phases to task_plan.md before starting.\"}"
     exit 0
 fi
 
-echo "{\"followup_message\": \"[planning-with-files] Task incomplete ($COMPLETE/$TOTAL phases done). Update $PROGRESS_FILE, then read $PLAN_FILE and continue working on the remaining phases.\"}"
+echo "{\"followup_message\": \"[planning-with-files] Task incomplete ($COMPLETE/$TOTAL phases done). Update progress.md, then read task_plan.md and continue working on the remaining phases.\"}"
 exit 0

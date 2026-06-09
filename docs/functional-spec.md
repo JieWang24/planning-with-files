@@ -111,16 +111,13 @@ After binding, hook context comes from:
 
 If a session has no session plan, the Python adapters stay silent for `SessionStart`, `UserPromptSubmit`, `Stop`, and `PermissionRequest`.
 
-When hook context is injected, it explicitly names the canonical files for that session:
+When hook context is injected, it gives compact plan excerpts and names the bound plan directory for that session:
 
 ```text
-[planning-with-files] CANONICAL PLAN FILES for THIS session — read & update ONLY these:
-  task_plan : <path>
-  findings  : <path>
-  progress  : <path>
+[planning-with-files] This session is BOUND to plan dir: <path>
 ```
 
-Agents should read and update only those paths. In directory-plan mode, the injected text also forbids reading or editing `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/` as current session context.
+Agents should read and update `task_plan.md`, `findings.md`, and `progress.md` inside that bound plan directory.
 
 All hook adapters fail open. Hook errors are swallowed by `main_guard`, so a planning hook failure should not break ordinary Codex tool usage.
 
@@ -132,7 +129,7 @@ The skill entrypoint is:
 skills/planning-with-files/SKILL.md
 ```
 
-The skill explains when to use file-based planning, requires script-first task creation with `--plan-dir`, and instructs agents to use hook-injected canonical file paths for the current session.
+The skill explains when to use file-based planning, requires script-first task creation with `--plan-dir`, and instructs agents to use the hook-injected bound plan directory for the current session.
 
 The skill frontmatter intentionally does not declare active hooks. Runtime hooks are registered at the project level through `.codex/hooks.json`. This avoids stale root-level `task_plan.md` behavior and keeps all hook execution under the customized session-plan flow.
 
@@ -415,12 +412,11 @@ Flow:
 Rendered context includes:
 
 1. A planning header.
-2. The first 50 lines of `task_plan.md`.
-3. The last 20 lines of `progress.md`.
+2. The first 30 lines of `task_plan.md`.
+3. The last 12 lines of `progress.md`.
 4. `===BEGIN PLAN DATA===` / `===END PLAN DATA===` framing so plan content is treated as data.
-5. Canonical `task_plan`, `findings`, and `progress` paths for this session.
-6. In directory-plan mode, a warning not to read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/`.
-7. If a plan attestation exists, `Plan-SHA256`; if the hash mismatches, plan injection is blocked with a tamper warning.
+5. The bound plan directory for this session.
+6. If a plan attestation exists, `Plan-SHA256`; if the hash mismatches, plan injection is blocked with a tamper warning.
 
 In debug mode, it emits/logs whether it rendered context, found no session plan, was not attached, or suppressed planning because the prompt contained `临时任务`.
 
@@ -473,8 +469,7 @@ Flow for ordinary Bash:
 Reminder:
 
 ```text
-[planning-with-files] Session plan: <plan-dir>
-[planning-with-files] Update <plan-dir>/progress.md with what you just did. If a phase is now complete, update <plan-dir>/task_plan.md status.
+[planning-with-files] Update progress.md with what you just did. If a phase is now complete, update task_plan.md status.
 [codex-scholar] For KB edits, route project-owned ideas/specs to Designs/ before Experiments/, Results/, or paper claims.
 ```
 
@@ -583,7 +578,7 @@ If `.planning/.active_plan` later changes, existing session bindings do not chan
 
 ## Existing Task Continuation
 
-For normal agent work, continue from the hook-injected canonical file paths. For manual debugging only, a human can inspect a known session-bound task by explicitly providing its plan id:
+For normal agent work, continue from the hook-injected bound plan directory. For manual debugging only, a human can inspect a known session-bound task by explicitly providing its plan id:
 
 ```bash
 PLAN_ID="$(cat .planning/sessions/<session-id>.active_plan)"
@@ -625,7 +620,7 @@ A migrated machine is equivalent when all of these are true:
 7. Running `CODEX_THREAD_ID=<sid> init-session.sh --plan-dir "Smoke Test"` creates `.planning/<plan-id>/`.
 8. That same command immediately writes `.planning/sessions/<sid>.active_plan` and `.planning/sessions/<sid>.attached`.
 9. Simulated `PostToolUse` with conflicting `turn_id` does not create `.planning/sessions/<turn-id>.active_plan`.
-10. Simulated `UserPromptSubmit` with that session id emits the session plan context plus canonical file paths and anti cross-plan-read warning through `hookSpecificOutput.additionalContext`.
+10. Simulated `UserPromptSubmit` with that session id emits compact session plan context plus the bound plan directory through `hookSpecificOutput.additionalContext`.
 11. Simulated no-id `PostToolUse` does not report a false successful session binding.
 12. Bare `resolve-plan-dir.sh` is blocked by `PreToolUse` unless `PLAN_ID` is explicit.
 13. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
@@ -680,7 +675,7 @@ tools/smoke-test-hook-debug.sh
 
 ## Known Boundaries
 
-The hook system cannot stop every possible manual read. It blocks known bare resolver Bash calls while planning hooks are active, but an agent can still open `.planning/.active_plan` or another plan directory directly. Project instructions should explicitly say to use hook-injected canonical files or the `PLAN_ID` printed by `init-session.sh --plan-dir`.
+The hook system cannot stop every possible manual read. It blocks known bare resolver Bash calls while planning hooks are active, but an agent can still open `.planning/.active_plan` or another plan directory directly. Project instructions should explicitly say to use the hook-injected bound plan directory or the `PLAN_ID` printed by `init-session.sh --plan-dir`.
 
 `PreToolUse` is intentionally quiet for normal Bash commands. It records plan-creation state and blocks known unsafe resolver calls. The active reminder is emitted by `PostToolUse` after Bash when a session plan exists.
 
