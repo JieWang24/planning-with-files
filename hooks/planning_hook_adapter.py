@@ -6,6 +6,7 @@ import os
 import re
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,8 @@ BASH_TOOL_NAMES = {
     "functions.exec_command",
 }
 PLAN_CREATION_SCRIPT_NAMES = ("init-session.sh", "init-session.ps1")
+TRUTHY_VALUES = {"1", "true", "yes", "on", "enable", "enabled", "debug"}
+FALSY_VALUES = {"0", "false", "no", "off", "disable", "disabled"}
 
 
 def load_payload() -> dict[str, Any]:
@@ -166,6 +169,14 @@ def _normalize_mode(value: str) -> str:
     return value.strip().lower().replace("-", "_")
 
 
+def _truthy(value: str) -> bool:
+    return _normalize_mode(value) in TRUTHY_VALUES
+
+
+def _falsy(value: str) -> bool:
+    return _normalize_mode(value) in FALSY_VALUES
+
+
 def _mode_from_project(root: Path) -> str:
     mode_file = root / ".planning" / ".hooks_mode"
     if not mode_file.exists():
@@ -174,6 +185,25 @@ def _mode_from_project(root: Path) -> str:
         return _normalize_mode(mode_file.read_text(encoding="utf-8"))
     except OSError:
         return ""
+
+
+def _debug_mode_from_project(root: Path) -> str:
+    debug_file = root / ".planning" / ".hooks_debug"
+    if not debug_file.exists():
+        return ""
+    try:
+        return _normalize_mode(debug_file.read_text(encoding="utf-8"))
+    except OSError:
+        return ""
+
+
+def is_hook_debug_enabled(root: Path) -> bool:
+    env_value = os.environ.get("PWF_HOOK_DEBUG", "")
+    if _truthy(env_value):
+        return True
+    if _falsy(env_value):
+        return False
+    return _truthy(_debug_mode_from_project(root))
 
 
 def _is_sentinel_attached(root: Path, session_id: str | None) -> bool:
@@ -354,15 +384,15 @@ def is_session_attached(root: Path, session_id: str | None) -> bool:
         return False
 
     env_mode = _normalize_mode(os.environ.get("PWF_HOOKS", ""))
-    if env_mode in {"1", "true", "yes", "on", "enable", "enabled"}:
+    if env_mode in TRUTHY_VALUES:
         return True
-    if env_mode in {"0", "false", "no", "off", "disable", "disabled"}:
+    if env_mode in FALSY_VALUES:
         return False
 
     project_mode = _mode_from_project(root)
-    if project_mode in {"1", "true", "yes", "on", "enable", "enabled"}:
+    if project_mode in TRUTHY_VALUES:
         return True
-    if project_mode in {"0", "false", "no", "off", "disable", "disabled"}:
+    if project_mode in FALSY_VALUES:
         return False
     if project_mode in {"session", "session_only", "attached"}:
         return _is_sentinel_attached(root, session_id)
@@ -373,6 +403,62 @@ def is_session_attached(root: Path, session_id: str | None) -> bool:
     if not session_id:
         return False  # sessions dir exists but caller has no ID — stay silent
     return (sessions_dir / f"{session_id}.attached").exists()
+
+
+def _debug_log_path(root: Path) -> Path:
+    return root / ".planning" / "debug" / "hook-events.jsonl"
+
+
+def hook_debug_line(
+    root: Path,
+    session_id: str | None,
+    hook_name: str,
+    note: str = "",
+) -> str:
+    if not is_hook_debug_enabled(root):
+        return ""
+
+    plan_id = session_active_plan_id(root, session_id)
+    active_id = project_active_plan_id(root)
+    mode = _mode_from_project(root) or "legacy"
+    attached = is_session_attached(root, session_id)
+    log_path = _debug_log_path(root)
+    event = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "hook": hook_name,
+        "cwd": str(root),
+        "session_id": session_id or "",
+        "mode": mode,
+        "attached": attached,
+        "session_plan": plan_id,
+        "project_active_plan": active_id,
+        "note": note,
+    }
+
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False, separators=(",", ":")))
+            fh.write("\n")
+    except OSError:
+        pass
+
+    bits = [
+        f"[planning-with-files debug] {hook_name} triggered",
+        f"mode={mode}",
+        f"session={session_id or 'none'}",
+        f"attached={'yes' if attached else 'no'}",
+        f"session_plan={plan_id or 'none'}",
+        f"active_plan={active_id or 'none'}",
+    ]
+    if note:
+        bits.append(f"note={note}")
+    bits.append(f"log={log_path}")
+    return "; ".join(bits)
+
+
+def with_debug_prefix(debug_line: str, message: str) -> str:
+    return "\n".join(part for part in (debug_line, message) if part)
 
 
 def emit_json(payload: dict[str, Any]) -> None:

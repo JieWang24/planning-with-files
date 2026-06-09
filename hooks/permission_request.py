@@ -16,20 +16,33 @@ def main() -> None:
     session_id = adapter.session_id_from_payload(payload)
 
     if not adapter.is_session_attached(root, session_id):
+        debug_line = adapter.hook_debug_line(root, session_id, "PermissionRequest", "not attached; no reminder")
+        if debug_line:
+            adapter.emit_json({"systemMessage": debug_line})
         return
 
     plan_id = adapter.ensure_session_plan(root, session_id)
     if not plan_id:
+        debug_line = adapter.hook_debug_line(root, session_id, "PermissionRequest", "no session plan; no reminder")
+        if debug_line:
+            adapter.emit_json({"systemMessage": debug_line})
         return
 
     plan = root / ".planning" / plan_id / "task_plan.md"
     if not plan.exists():
+        debug_line = adapter.hook_debug_line(root, session_id, "PermissionRequest", "session plan missing task_plan.md")
+        if debug_line:
+            adapter.emit_json({"systemMessage": debug_line})
         return
 
+    debug_line = adapter.hook_debug_line(root, session_id, "PermissionRequest", "approval reminder")
     adapter.emit_json({
-        "systemMessage": (
-            "[planning-with-files] Active plan detected. Review the current phase "
-            "in task_plan.md before approving the tool request."
+        "systemMessage": adapter.with_debug_prefix(
+            debug_line,
+            (
+                "[planning-with-files] Active plan detected. Review the current phase "
+                "in task_plan.md before approving the tool request."
+            ),
         )
     })
 

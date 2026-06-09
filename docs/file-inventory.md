@@ -78,7 +78,9 @@ tools/
 | --- | --- |
 | `register-planning-hooks.py` | Writes project-level `.codex/hooks.json` and initializes `.planning/.hooks_mode` to `on` when missing. |
 | `planning-hooks-mode.py` | Reads or sets `.planning/.hooks_mode`. |
+| `planning-hooks-debug.py` | Reads or sets project-local `.planning/.hooks_debug`. |
 | `smoke-test-codex-session-binding.sh` | Empty-project smoke test for stable Codex session-plan binding. |
+| `smoke-test-hook-debug.sh` | Simulates all six planning hook adapters and verifies debug JSONL logging. |
 
 ## Project State
 
@@ -102,6 +104,8 @@ These files are generated in each project and are not stored in this repository:
 .planning/sessions/<session-id>.active_plan
 .planning/sessions/<session-id>.attached
 .planning/sessions/<session-id>.temporary-off
+.planning/.hooks_debug
+.planning/debug/hook-events.jsonl
 ```
 
 Project state should remain project-local.

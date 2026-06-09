@@ -82,10 +82,12 @@ No project was registered. To enable hooks for a project:
 
   python3 "$CODEX_HOME/tools/register-planning-hooks.py" /path/to/project
   python3 "$CODEX_HOME/tools/planning-hooks-mode.py" on /path/to/project
+  python3 "$CODEX_HOME/tools/planning-hooks-debug.py" on /path/to/project
 
 Use mode "on" for automatic script-first planning behavior.
 Use mode "off" to disable planning hooks in a project.
 Use mode "session" only for manual opt-in experiments; init-session can create the attached sentinel when a stable session id exists.
+Use debug "on" only while diagnosing hook trigger behavior.
 EOF
 fi
 

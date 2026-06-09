@@ -226,6 +226,7 @@ Helper scripts for automation:
 - **PreToolUse guard** — Bare `resolve-plan-dir.sh` calls are blocked while planning hooks are active. Use hook-injected paths or explicitly set `PLAN_ID`.
 - **Temporary-task suppression** — If your prompt contains `临时任务`, planning hooks stay silent for that turn and clear on `Stop`.
 - **Gating** — `.planning/.hooks_mode` (`on`, `off`, `session`) or `PWF_HOOKS` controls whether planning hooks fire. Default project registration writes `on`.
+- **Debug mode** — `.planning/.hooks_debug=on` or `PWF_HOOK_DEBUG=1` makes each planning hook write `.planning/debug/hook-events.jsonl` and emit a short `[planning-with-files debug]` line when possible. Use `planning-hooks-debug.py` to toggle it.
 
 ## Advanced Topics
 

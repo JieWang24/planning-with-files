@@ -13,7 +13,9 @@ The `main` branch is the Codex default branch. The `claude` branch is kept separ
 | `hooks/hooks.json` | Project hook template matching the registrar output. |
 | `tools/register-planning-hooks.py` | Registers project-level `.codex/hooks.json` entries. |
 | `tools/planning-hooks-mode.py` | Sets or reads `.planning/.hooks_mode`. |
+| `tools/planning-hooks-debug.py` | Sets or reads project-level planning hook debug output. |
 | `tools/smoke-test-codex-session-binding.sh` | End-to-end empty-project smoke test for session-plan binding. |
+| `tools/smoke-test-hook-debug.sh` | Simulates all planning hook events and verifies debug logging. |
 | `install.sh` | Installs the portable package into `~/.codex` and optionally registers projects. |
 | `docs/codex-setup.md` | Detailed install, migration, behavior, and troubleshooting guide. |
 | `docs/functional-spec.md` | Full behavior contract for installation, registration, hooks, modes, and session binding. |
@@ -130,6 +132,24 @@ If a prompt contains `临时任务`, `UserPromptSubmit` creates a per-session te
 
 Use this for one-off questions or simple commands that should not activate planning.
 
+## Debug Mode
+
+Debug mode is project-local and opt-in. It is useful when you want to prove which hooks fired, even when their normal behavior is silent.
+
+```bash
+python3 ~/.codex/tools/planning-hooks-debug.py on /path/to/project
+python3 ~/.codex/tools/planning-hooks-debug.py status /path/to/project
+python3 ~/.codex/tools/planning-hooks-debug.py off /path/to/project
+```
+
+When enabled, each planning hook appends one JSON line to:
+
+```text
+<project>/.planning/debug/hook-events.jsonl
+```
+
+Hooks also emit a short `[planning-with-files debug] ...` line when Codex allows that hook to return visible context. `UserPromptSubmit` may still appear as injected context rather than a UI warning, so the JSONL log is the source of truth.
+
 ## Migration Checklist
 
 1. Clone this repository on the new machine.
@@ -142,5 +162,6 @@ Use this for one-off questions or simple commands that should not activate plann
 8. Confirm `.planning/sessions/<session-id>.active_plan` points to the new plan.
 9. Confirm subsequent prompts render the session plan, not the project `.active_plan`.
 10. Run `~/.codex/tools/smoke-test-codex-session-binding.sh` or the repository copy before trusting a migrated machine.
+11. Run `~/.codex/tools/smoke-test-hook-debug.sh` to verify all six planning hook adapters can emit debug records.
 
 See [docs/codex-setup.md](docs/codex-setup.md) for setup, [docs/functional-spec.md](docs/functional-spec.md) for the full runtime contract, and [docs/codex-sync-step1-2.md](docs/codex-sync-step1-2.md) for the anti cross-plan-read/session-binding sync note.

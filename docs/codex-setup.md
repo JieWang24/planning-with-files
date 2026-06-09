@@ -24,6 +24,7 @@ This installs:
 ~/.codex/hooks/
 ~/.codex/tools/register-planning-hooks.py
 ~/.codex/tools/planning-hooks-mode.py
+~/.codex/tools/planning-hooks-debug.py
 ```
 
 The installer keeps the skill directory exact with `rsync --delete`, then overlays this package's hook and tool files into `~/.codex/hooks` and `~/.codex/tools` without deleting unrelated files.
@@ -215,6 +216,50 @@ turns planning hooks off for that session turn. The marker is stored under `.pla
 
 This affects only planning-with-files hooks, not other hooks.
 
+## Debug Mode
+
+Debug mode is for hook diagnostics. It does not change which hooks are registered; it only makes planning hooks report when they run.
+
+Enable it for one project:
+
+```bash
+python3 ~/.codex/tools/planning-hooks-debug.py on /path/to/project
+```
+
+Disable it:
+
+```bash
+python3 ~/.codex/tools/planning-hooks-debug.py off /path/to/project
+```
+
+Status:
+
+```bash
+python3 ~/.codex/tools/planning-hooks-debug.py status /path/to/project
+```
+
+The project marker is:
+
+```text
+<project>/.planning/.hooks_debug
+```
+
+The durable event log is:
+
+```text
+<project>/.planning/debug/hook-events.jsonl
+```
+
+Each event records timestamp, hook name, cwd, session id, mode, attached state, session plan, project active plan, and a short note.
+
+Environment override:
+
+```bash
+PWF_HOOK_DEBUG=1
+```
+
+In Codex App, prefer the project marker because you do not need to restart Codex with an environment variable.
+
 ## Verification Commands
 
 Check installed Python syntax:
@@ -248,6 +293,12 @@ Run the empty-project session-binding smoke test:
 
 ```bash
 ~/.codex/tools/smoke-test-codex-session-binding.sh
+```
+
+Run the all-hook debug smoke test:
+
+```bash
+~/.codex/tools/smoke-test-hook-debug.sh
 ```
 
 Create a smoke plan:

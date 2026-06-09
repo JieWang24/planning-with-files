@@ -30,6 +30,7 @@ After running `./install.sh`, the target machine should contain:
 ~/.codex/hooks/
 ~/.codex/tools/register-planning-hooks.py
 ~/.codex/tools/planning-hooks-mode.py
+~/.codex/tools/planning-hooks-debug.py
 ```
 
 The installer uses `rsync --delete` only for `~/.codex/skills/planning-with-files/`, because that directory is package-owned.
@@ -71,6 +72,13 @@ When no session id is available, the temporary marker falls back to:
 
 ```text
 <project>/.planning/.temporary-off
+```
+
+Debug mode creates:
+
+```text
+<project>/.planning/.hooks_debug
+<project>/.planning/debug/hook-events.jsonl
 ```
 
 ## Core Invariants
@@ -241,6 +249,45 @@ If neither `PWF_HOOKS` nor `.planning/.hooks_mode` exists, the adapter enters le
 
 New registrations create `.hooks_mode=on`, so normal migrated projects do not rely on legacy compatibility mode.
 
+## Debug Gate
+
+Debug mode is controlled per project by:
+
+```text
+.planning/.hooks_debug
+```
+
+Supported values:
+
+| Value | Behavior |
+| --- | --- |
+| `on` | Each planning hook writes a JSONL debug event and emits a short debug line when possible. |
+| `off` or missing | Normal quiet behavior. |
+
+Manage it with:
+
+```bash
+python3 ~/.codex/tools/planning-hooks-debug.py status /path/to/project
+python3 ~/.codex/tools/planning-hooks-debug.py on /path/to/project
+python3 ~/.codex/tools/planning-hooks-debug.py off /path/to/project
+```
+
+`PWF_HOOK_DEBUG=1` enables debug output for the current process. `PWF_HOOK_DEBUG=0` disables it even when the project marker is on.
+
+When enabled, every planning hook adapter appends one JSON object to:
+
+```text
+.planning/debug/hook-events.jsonl
+```
+
+Each object contains:
+
+```text
+timestamp, hook, cwd, session_id, mode, attached, session_plan, project_active_plan, note
+```
+
+This JSONL log is the source of truth for whether a hook fired. Codex UI display differs by hook: `PostToolUse` and `Stop` often surface visibly, while `UserPromptSubmit` may be consumed as additional context.
+
 ## Session Identity
 
 The shared adapter resolves a session id in this order:
@@ -349,6 +396,8 @@ Flow:
 
 If there is no session plan, the hook stays silent. It does not bind to `.planning/.active_plan`.
 
+In debug mode, it emits/logs why it stayed silent or that startup context was rendered.
+
 ### `user_prompt_submit.py`
 
 Event: `UserPromptSubmit`.
@@ -373,6 +422,8 @@ Rendered context includes:
 6. In directory-plan mode, a warning not to read or edit `.planning/.active_plan`, root-level `./task_plan.md`, or any other `.planning/<dir>/`.
 7. If a plan attestation exists, `Plan-SHA256`; if the hash mismatches, plan injection is blocked with a tamper warning.
 
+In debug mode, it emits/logs whether it rendered context, found no session plan, was not attached, or suppressed planning because the prompt contained `临时任务`.
+
 ### `pre_tool_use.py`
 
 Event: `PreToolUse`.
@@ -388,6 +439,8 @@ Flow:
 5. Emit no normal reminder output.
 
 This hook is intentionally quiet for ordinary Bash commands. It exists to make the creation flow detectable without dumping full planning files before every command, and to block the known unsafe bare resolver path.
+
+In debug mode, ordinary Bash commands emit/log `PreToolUse triggered`.
 
 The shell renderer `pre-tool-use.sh` still contains the short reminder form:
 
@@ -427,6 +480,8 @@ Reminder:
 
 If there is no session plan, ordinary Bash commands get no planning reminder.
 
+In debug mode, ordinary Bash commands and plan-creation commands emit/log `PostToolUse triggered`.
+
 ### `stop.py`
 
 Event: `Stop`.
@@ -443,6 +498,8 @@ Flow:
 8. If incomplete and this is the first stop pass, emit `decision=block`.
 
 This preserves the planning contract without causing recursive stop-hook deadlock.
+
+In debug mode, the stop hook emits/logs whether it checked an incomplete task, a complete task, or stayed silent.
 
 `stop.sh` supports:
 
@@ -470,6 +527,8 @@ Flow:
 4. Emit a short user-facing reminder.
 
 This hook never blocks approval.
+
+In debug mode, permission requests emit/log whether a plan reminder was available.
 
 ## Temporary Task Flow
 
@@ -570,6 +629,7 @@ A migrated machine is equivalent when all of these are true:
 11. Simulated no-id `PostToolUse` does not report a false successful session binding.
 12. Bare `resolve-plan-dir.sh` is blocked by `PreToolUse` unless `PLAN_ID` is explicit.
 13. Simulated `UserPromptSubmit` containing `临时任务` suppresses planning output for that turn.
+14. Simulated debug mode records all six planning hook names in `.planning/debug/hook-events.jsonl`.
 
 ## Verification Checklist
 
@@ -610,6 +670,12 @@ Empty-project session-binding smoke test:
 
 ```bash
 tools/smoke-test-codex-session-binding.sh
+```
+
+All-hook debug smoke test:
+
+```bash
+tools/smoke-test-hook-debug.sh
 ```
 
 ## Known Boundaries
