@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""Stop.
+
+Bound sessions only. Feedback uses `hookSpecificOutput.additionalContext`
+(non-error "Stop hook feedback"), respecting `stop_hook_active`.
+
+Modes (`PWF_STOP_MODE` env or `.planning/.stop_mode`):
+* sync (default) — if this turn edited files / ran a batch of commands but the
+  plan files were not touched since, ask once for a progress entry.
+* continue — legacy: while phases are incomplete (and nothing runs in the
+  background), ask Claude to keep working on the remaining phases.
+* off — no Stop behaviour.
+A short user-visible status line is shown when the phase count changes.
+"""
 from __future__ import annotations
 
 import planning_hook_adapter as adapter
@@ -6,42 +19,62 @@ import planning_hook_adapter as adapter
 
 def main() -> None:
     payload = adapter.load_payload()
-    root = adapter.cwd_from_payload(payload)
-    session_id = adapter.session_id_from_payload(payload)
+    cwd = adapter.cwd_from_payload(payload)
+    sid = adapter.session_id_from_payload(payload)
 
-    if adapter.is_temporarily_disabled(root, session_id):
-        adapter.clear_temporary_disable(root, session_id)
-        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "temporary-task cleared; no completion check"))
+    if adapter.is_temporarily_disabled(sid):
+        adapter.clear_temporary_disable(sid)
+        adapter.update_state(sid, activity=None)
+        return
+    if not adapter.hooks_enabled(cwd, sid):
+        return
+    plan = adapter.session_plan(cwd, sid)
+    if plan is None:
+        return
+    mode = adapter.stop_mode(plan.root)
+    if mode == "off":
         return
 
-    if not adapter.is_session_attached(root, session_id):
-        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "not attached; no completion check"))
-        return
+    state = adapter.load_state(sid)
+    complete, total = adapter.phase_counts(plan.task_plan)
+    status = f"{plan.label}:{complete}/{total}"
+    status_message = ""
+    previous = state.get("last_status")
+    if total and previous and previous != status and previous.split(":")[0] == plan.label:
+        if complete == total:
+            status_message = f"[planning-with-files] {plan.label}: ALL PHASES COMPLETE ({complete}/{total})."
+        else:
+            status_message = f"[planning-with-files] {plan.label}: {complete}/{total} phases complete."
+    state["last_status"] = status
 
-    if not adapter.effective_plan_present(root, session_id):
-        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "no plan resolved; allowing stop"))
-        return
+    feedback = ""
+    stop_active = bool(payload.get("stop_hook_active"))
+    activity = state.get("activity") if isinstance(state.get("activity"), dict) else {}
+    if activity.get("plan") != plan.label:
+        activity = {}
 
-    stdout, _ = adapter.run_shell_script("stop.sh", root, session_id)
-    result = adapter.parse_json(stdout)
+    if mode == "sync" and activity:
+        since = float(activity.get("since") or 0)
+        busy = int(activity.get("edits") or 0) >= adapter.STOP_EDITS or int(activity.get("bash") or 0) >= adapter.STOP_BASH
+        if busy and not adapter.plan_updated_since(plan, since) and not stop_active:
+            feedback = (
+                f"[planning-with-files] Before finishing: this turn made {activity.get('edits', 0)} file edit(s) and "
+                f"{activity.get('bash', 0)} shell command(s) for plan {plan.label}, but {plan.progress} was not updated. "
+                f"Append a short progress entry there (and update the phase status in {plan.task_plan} if a phase "
+                "changed), then finish. Do not start new work."
+            )
+        else:
+            state.pop("activity", None)
+    elif mode == "continue" and total and complete < total and not stop_active and not payload.get("background_tasks"):
+        feedback = (
+            f"[planning-with-files] Plan {plan.label} is incomplete ({complete}/{total} phases complete). Update "
+            f"{plan.progress}, then continue with the remaining phases in {plan.task_plan}."
+        )
 
-    message = result.get("followup_message")
-    if not isinstance(message, str) or not message:
-        adapter.emit_debug(adapter.hook_debug_line(root, session_id, "Stop", "no followup message"))
-        return
-
-    if "ALL PHASES COMPLETE" in message:
-        dbg = adapter.hook_debug_line(root, session_id, "Stop", "all phases complete; allowing stop")
-        adapter.emit_json({"systemMessage": adapter.with_debug_prefix(dbg, message)})
-        return
-
-    if bool(payload.get("stop_hook_active")):
-        dbg = adapter.hook_debug_line(root, session_id, "Stop", "stop_hook_active; not re-blocking")
-        adapter.emit_json({"systemMessage": adapter.with_debug_prefix(dbg, message)})
-        return
-
-    dbg = adapter.hook_debug_line(root, session_id, "Stop", "blocking stop; phases incomplete")
-    adapter.emit_json({"decision": "block", "reason": adapter.with_debug_prefix(dbg, message)})
+    adapter.save_state(sid, state)
+    note = "feedback" if feedback else ("status" if status_message else "quiet")
+    adapter.emit("Stop", context=feedback, system_message=status_message,
+                 debug_line=adapter.hook_debug_line(cwd, sid, "Stop", f"{mode}: {note}", plan))
 
 
 if __name__ == "__main__":

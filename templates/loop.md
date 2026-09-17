@@ -11,10 +11,12 @@
   Override per call with `/loop 5m "your prompt"`.
 -->
 
-Re-read `task_plan.md`, `progress.md`, and the most recent 20 lines of `findings.md`.
+Use the plan bound to THIS session: the canonical `task_plan.md` / `findings.md` / `progress.md` paths injected by the planning hooks (or the dir printed by `session-plan.sh path`). Never use `.planning/.active_plan` or another plan directory. If no plan is bound, say so and do nothing.
+
+Re-read that `task_plan.md`, `progress.md`, and the most recent 20 lines of `findings.md`.
 
 Run the completion check:
-- On Linux/macOS/Git Bash: `sh ${CLAUDE_PLUGIN_ROOT}/scripts/check-complete.sh` (or the matching skill path)
+- On Linux/macOS/Git Bash: `check-complete.sh <plan dir>/task_plan.md` from the plugin's `scripts/` dir (inside Claude Code it defaults to this session's plan)
 - On Windows: equivalent `.ps1`
 
 After reading:

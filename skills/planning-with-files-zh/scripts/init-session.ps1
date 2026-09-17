@@ -1,124 +1,166 @@
-# 初始化新会话的规划文件
-# 用法：.\init-session.ps1 [项目名称]
+# Initialize planning files for a new session
+# Usage: .\init-session.ps1 [-Template TYPE] [project-name]
+# Templates: default, analytics
 
 param(
-    [string]$ProjectName = "project"
+    [string]$ProjectName = "project",
+    [string]$Template = "default"
 )
 
 $DATE = Get-Date -Format "yyyy-MM-dd"
 
-Write-Host "正在初始化规划文件：$ProjectName"
+# Resolve template directory (skill root is one level up from scripts/)
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$SkillRoot = Split-Path -Parent $ScriptDir
+$TemplateDir = Join-Path $SkillRoot "templates"
 
-# 如果 task_plan.md 不存在则创建
-if (-not (Test-Path "task_plan.md")) {
-    @"
-# 任务计划：[简要描述]
+Write-Host "Initializing planning files for: $ProjectName (template: $Template)"
 
-## 目标
-[用一句话描述最终状态]
-
-## 当前阶段
-阶段 1
-
-## 各阶段
-
-### 阶段 1：需求与发现
-- [ ] 理解用户意图
-- [ ] 确定约束条件和需求
-- [ ] 将发现记录到 findings.md
-- **状态：** in_progress
-
-### 阶段 2：规划与结构
-- [ ] 确定技术方案
-- [ ] 如有需要创建项目结构
-- [ ] 记录决策及理由
-- **状态：** pending
-
-### 阶段 3：实现
-- [ ] 按计划逐步执行
-- [ ] 先将代码写入文件再执行
-- [ ] 增量测试
-- **状态：** pending
-
-### 阶段 4：测试与验证
-- [ ] 验证所有需求已满足
-- [ ] 将测试结果记录到 progress.md
-- [ ] 修复发现的问题
-- **状态：** pending
-
-### 阶段 5：交付
-- [ ] 检查所有输出文件
-- [ ] 确保交付物完整
-- [ ] 交付给用户
-- **状态：** pending
-
-## 已做决策
-| 决策 | 理由 |
-|------|------|
-
-## 遇到的错误
-| 错误 | 解决方案 |
-|------|---------|
-"@ | Out-File -FilePath "task_plan.md" -Encoding UTF8
-    Write-Host "已创建 task_plan.md"
-} else {
-    Write-Host "task_plan.md 已存在，跳过"
+# Validate template
+if ($Template -ne "default" -and $Template -ne "analytics") {
+    Write-Host "Unknown template: $Template (available: default, analytics). Using default."
+    $Template = "default"
 }
 
-# 如果 findings.md 不存在则创建
+# Create task_plan.md if it doesn't exist
+if (-not (Test-Path "task_plan.md")) {
+    $AnalyticsPlan = Join-Path $TemplateDir "analytics_task_plan.md"
+    if ($Template -eq "analytics" -and (Test-Path $AnalyticsPlan)) {
+        Copy-Item $AnalyticsPlan "task_plan.md"
+    } else {
+        @"
+# Task Plan: [Brief Description]
+
+## Goal
+[One sentence describing the end state]
+
+## Current Phase
+Phase 1
+
+## Phases
+
+### Phase 1: Requirements & Discovery
+- [ ] Understand user intent
+- [ ] Identify constraints
+- [ ] Document in findings.md
+- **Status:** in_progress
+
+### Phase 2: Planning & Structure
+- [ ] Define approach
+- [ ] Create project structure
+- **Status:** pending
+
+### Phase 3: Implementation
+- [ ] Execute the plan
+- [ ] Write to files before executing
+- **Status:** pending
+
+### Phase 4: Testing & Verification
+- [ ] Verify requirements met
+- [ ] Document test results
+- **Status:** pending
+
+### Phase 5: Delivery
+- [ ] Review outputs
+- [ ] Deliver to user
+- **Status:** pending
+
+## Decisions Made
+| Decision | Rationale |
+|----------|-----------|
+
+## Errors Encountered
+| Error | Resolution |
+|-------|------------|
+"@ | Out-File -FilePath "task_plan.md" -Encoding UTF8
+    }
+    Write-Host "Created task_plan.md"
+} else {
+    Write-Host "task_plan.md already exists, skipping"
+}
+
+# Create findings.md if it doesn't exist
 if (-not (Test-Path "findings.md")) {
-    @"
-# 发现与决策
+    $AnalyticsFindings = Join-Path $TemplateDir "analytics_findings.md"
+    if ($Template -eq "analytics" -and (Test-Path $AnalyticsFindings)) {
+        Copy-Item $AnalyticsFindings "findings.md"
+    } else {
+        @"
+# Findings & Decisions
 
-## 需求
+## Requirements
 -
 
-## 研究发现
+## Research Findings
 -
 
-## 技术决策
-| 决策 | 理由 |
-|------|------|
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
 
-## 遇到的问题
-| 问题 | 解决方案 |
-|------|---------|
+## Issues Encountered
+| Issue | Resolution |
+|-------|------------|
 
-## 资源
+## Resources
 -
 "@ | Out-File -FilePath "findings.md" -Encoding UTF8
-    Write-Host "已创建 findings.md"
+    }
+    Write-Host "Created findings.md"
 } else {
-    Write-Host "findings.md 已存在，跳过"
+    Write-Host "findings.md already exists, skipping"
 }
 
-# 如果 progress.md 不存在则创建
+# Create progress.md if it doesn't exist
 if (-not (Test-Path "progress.md")) {
-    @"
-# 进度日志
+    if ($Template -eq "analytics") {
+        @"
+# Progress Log
 
-## 会话：$DATE
+## Session: $DATE
 
-### 当前状态
-- **阶段：** 1 - 需求与发现
-- **开始时间：** $DATE
+### Current Status
+- **Phase:** 1 - Data Discovery
+- **Started:** $DATE
 
-### 已执行操作
+### Actions Taken
 -
 
-### 测试结果
-| 测试 | 预期 | 实际 | 状态 |
-|------|------|------|------|
+### Query Log
+| Query | Result Summary | Interpretation |
+|-------|---------------|----------------|
 
-### 错误
-| 错误 | 解决方案 |
-|------|---------|
+### Errors
+| Error | Resolution |
+|-------|------------|
 "@ | Out-File -FilePath "progress.md" -Encoding UTF8
-    Write-Host "已创建 progress.md"
+    } else {
+        @"
+# Progress Log
+
+## Session: $DATE
+
+### Current Status
+- **Phase:** 1 - Requirements & Discovery
+- **Started:** $DATE
+
+### Actions Taken
+-
+
+### Test Results
+| Test | Expected | Actual | Status |
+|------|----------|--------|--------|
+
+### Errors
+| Error | Resolution |
+|-------|------------|
+"@ | Out-File -FilePath "progress.md" -Encoding UTF8
+    }
+    Write-Host "Created progress.md"
 } else {
-    Write-Host "progress.md 已存在，跳过"
+    Write-Host "progress.md already exists, skipping"
 }
 
 Write-Host ""
-Write-Host "规划文件已初始化！"
-Write-Host "文件：task_plan.md, findings.md, progress.md"
+Write-Host "Planning files initialized!"
+Write-Host "Files: task_plan.md, findings.md, progress.md"

@@ -11,12 +11,12 @@ Steps:
 1. Parse args:
    - First arg matching `^\d+[smhd]$` is the interval (default `10m`).
    - Remaining args are an optional task prompt.
-2. Resolve the active plan as in `/plan-attest`.
+2. Resolve THIS session's plan with `sh "${CLAUDE_PLUGIN_ROOT}/scripts/session-plan.sh" path` (exit 1 = none bound; never fall back to `.planning/.active_plan`).
 3. Compose the loop prompt:
    - If user passed a task prompt: use it verbatim.
    - Else: use the default planning tick prompt:
      ```
-     Read task_plan.md and progress.md. Run scripts/check-complete.sh to see remaining phases.
+     Read <plan dir>/task_plan.md and <plan dir>/progress.md (the plan dir resolved above). Run check-complete.sh on <plan dir>/task_plan.md to see remaining phases.
      If no progress.md entry has been added since the last loop tick, write one summarizing the current state.
      If a phase finished, update its Status: line in task_plan.md.
      Continue the next phase if work remains.
@@ -24,7 +24,7 @@ Steps:
 4. Invoke `/loop <interval> <prompt>`.
 5. Confirm to the user: print the interval, the active plan ID, and remind that bare `/loop` invocation alone (without args) runs Claude Code's built-in maintenance prompt — `/plan-loop` differs by always grounding the tick in the planning files.
 
-If `task_plan.md` does not exist, refuse and direct user to run `/plan` first.
+If no plan is bound to this session, refuse and direct the user to `/plan` or `/plan-attach`.
 
 Why this exists:
 

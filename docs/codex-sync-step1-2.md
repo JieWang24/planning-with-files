@@ -1,3 +1,5 @@
+> **历史文档（2.43.0-claude.3 时期）**：Claude 端已由 2.44.0-claude.0 会话模型取代（未绑定会话不再回退到 `.active_plan`），见 [claude-session-model.md](claude-session-model.md)。本文仅保留作为当时的 Codex 同步记录。
+
 # Codex 同步设计文档：消除「串读干扰」(Step 1 + Step 2)
 
 > 适用对象：维护 **Codex 端** planning-with-files 的会话（`~/.codex/...` + 各项目 `.codex/hooks.json`）。

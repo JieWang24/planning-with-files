@@ -7,8 +7,10 @@
 #
 # Resolution:
 #   1. $PLAN_ID env var → ./.planning/$PLAN_ID/
-#   2. ./.planning/.active_plan
-#   3. Newest ./.planning/<dir>/ by mtime
+#   2. Inside a Claude Code session: the plan bound to THIS session
+#      (.planning/sessions/<session-id>.active_plan). Unbound → error, never
+#      another session's plan.
+#   3. Plain terminal only: ./.planning/.active_plan → newest plan dir
 #   4. Legacy ./task_plan.md at project root
 #
 # Usage:
@@ -21,8 +23,26 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RESOLVER="${SCRIPT_DIR}/resolve-plan-dir.sh"
 
+if [ -f "${SCRIPT_DIR}/session-lib.sh" ]; then
+    # shellcheck source=session-lib.sh
+    . "${SCRIPT_DIR}/session-lib.sh"
+fi
+
 resolve_plan_file() {
     plan_dir=""
+    if [ -z "${PLAN_ID:-}" ] && command -v pwf_session_plan_dir >/dev/null 2>&1; then
+        plan_dir="$(pwf_session_plan_dir)"
+        rc=$?
+        if [ "${rc}" -eq 0 ] && [ -f "${plan_dir}/task_plan.md" ]; then
+            printf "%s\n" "${plan_dir}/task_plan.md"
+            return 0
+        fi
+        if [ "${rc}" -eq 1 ]; then
+            printf "[plan-attest] No plan is bound to this Claude session. Bind one with session-plan.sh attach <PLAN_ID> (or create one with init-session.sh --plan-dir).\n" >&2
+            return 2
+        fi
+        plan_dir=""
+    fi
     if [ -f "${RESOLVER}" ]; then
         plan_dir="$(sh "${RESOLVER}" 2>/dev/null)"
     fi
@@ -71,10 +91,12 @@ case "${1:-}" in
         ;;
 esac
 
-plan_file="$(resolve_plan_file)" || {
-    printf "[plan-attest] No task_plan.md found. Create a plan first.\n" >&2
+plan_file="$(resolve_plan_file)"
+resolve_rc=$?
+if [ "${resolve_rc}" -ne 0 ]; then
+    [ "${resolve_rc}" -eq 2 ] || printf "[plan-attest] No task_plan.md found. Create a plan first.\n" >&2
     exit 1
-}
+fi
 
 attestation_file="$(attestation_path_for "${plan_file}")"
 

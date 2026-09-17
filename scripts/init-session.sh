@@ -8,10 +8,15 @@
 #   ./init-session.sh --plan-dir                   # slug mode with auto-generated untitled-<short> name
 #   ./init-session.sh --plan-dir "Quick Spike"     # slug mode, explicit slug
 #
-# Legacy mode (zero positional args, no --plan-dir) preserves v1.x behavior so
-# upgrades stay non-breaking. Slug mode addresses parallel multi-task isolation
-# (issue #148) by writing each plan under .planning/<date>-<slug>/ and pinning
-# .planning/.active_plan so resolve-plan-dir.sh can find it.
+# Slug mode writes each plan under .planning/<date>-<slug>/, records it as the
+# project's most recently created plan (.planning/.active_plan) and — inside a
+# Claude Code session (PWF_SESSION_ID / CLAUDE_CODE_SESSION_ID) — atomically binds
+# THIS session to it via .planning/sessions/<session-id>.active_plan. It prints
+# machine-readable PLAN_ROOT= / PLAN_ID= lines that the PostToolUse hook also
+# uses to bind the session when no session id is visible to the script.
+#
+# Legacy mode (zero positional args, no --plan-dir) keeps v1.x root-level files
+# for plain terminals; inside a Claude Code session it switches to slug mode.
 
 set -e
 
@@ -45,6 +50,14 @@ DATE=$(date +%Y-%m-%d)
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 SKILL_ROOT="$(dirname "$SCRIPT_DIR")"
 TEMPLATE_DIR="$SKILL_ROOT/templates"
+if [ -f "$SCRIPT_DIR/session-lib.sh" ]; then
+    # shellcheck source=session-lib.sh
+    . "$SCRIPT_DIR/session-lib.sh"
+fi
+SESSION_ID=""
+if command -v pwf_session_id >/dev/null 2>&1; then
+    SESSION_ID="$(pwf_session_id)"
+fi
 
 if [ "$TEMPLATE" != "default" ] && [ "$TEMPLATE" != "analytics" ]; then
     echo "Unknown template: $TEMPLATE (available: default, analytics). Using default."
@@ -53,7 +66,7 @@ fi
 
 # Slug mode triggers when a project name was given OR --plan-dir was passed.
 SLUG_MODE=0
-if [ -n "$PROJECT_NAME" ] || [ "$USE_PLAN_DIR" -eq 1 ]; then
+if [ -n "$PROJECT_NAME" ] || [ "$USE_PLAN_DIR" -eq 1 ] || [ -n "$SESSION_ID" ]; then
     SLUG_MODE=1
 fi
 
@@ -90,8 +103,8 @@ short_uuid() {
 }
 
 write_default_task_plan() {
-    cat > "$1" << 'EOF'
-# Task Plan: [Brief Description]
+    printf '# Task Plan: %s\n' "${PROJECT_NAME:-[Brief Description]}" > "$1"
+    cat >> "$1" << 'EOF'
 
 ## Goal
 [One sentence describing the end state]
@@ -267,13 +280,21 @@ if [ "$SLUG_MODE" -eq 1 ]; then
     mkdir -p "$PLAN_DIR"
 
     echo "Initializing planning files for: ${PROJECT_NAME:-untitled} (template: $TEMPLATE)"
-    echo "PLAN_ID=$PLAN_ID"
     create_files_in "$PLAN_DIR"
     printf "%s\n" "$PLAN_ID" > "${PLAN_ROOT}/.active_plan"
     echo ""
-    echo "Active plan recorded: ${PLAN_ROOT}/.active_plan"
-    echo "Pin this terminal to the plan for parallel sessions:"
-    echo "  export PLAN_ID=$PLAN_ID"
+    echo "PLAN_ROOT=$PLAN_ROOT"
+    echo "PLAN_ID=$PLAN_ID"
+    if [ -n "$SESSION_ID" ] && pwf_bind_session "$PWD" "$SESSION_ID" "$PLAN_ID"; then
+        echo "[planning-with-files] This Claude session ($SESSION_ID) is now bound to $PLAN_ID."
+    else
+        echo "[planning-with-files] No session id visible here; the PostToolUse hook binds the calling Claude session."
+        echo "  (plain terminal: export PLAN_ID=$PLAN_ID to pin this shell)"
+    fi
+    echo "Canonical files — read & update ONLY these for this task:"
+    echo "  task_plan : $PLAN_DIR/task_plan.md"
+    echo "  findings  : $PLAN_DIR/findings.md"
+    echo "  progress  : $PLAN_DIR/progress.md"
 else
     PROJECT_NAME="${PROJECT_NAME:-project}"
     echo "Initializing planning files for: $PROJECT_NAME (template: $TEMPLATE)"

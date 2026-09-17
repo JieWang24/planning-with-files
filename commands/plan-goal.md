@@ -8,7 +8,7 @@ Bridge the active plan to Claude Code's `/goal` primitive.
 
 Steps:
 
-1. Resolve the active plan: prefer `${PLAN_ID}` env var, then `.planning/.active_plan`, then newest `.planning/<dir>/`, then legacy `./task_plan.md`.
+1. Resolve THIS session's plan: run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/session-plan.sh" path` (exit code 1 = no plan bound). Never use `.planning/.active_plan` or another plan directory; a legacy root `./task_plan.md` is only valid in a project without `.planning/`.
 2. Read the resolved `task_plan.md`.
 3. Derive a goal condition from the plan content:
    - Default: "all phases in task_plan.md report Status: complete and check-complete.sh reports ALL PHASES COMPLETE"
@@ -16,7 +16,7 @@ Steps:
 4. Issue Claude Code's `/goal <condition>` with the derived text.
 5. Confirm to the user: print the goal condition + the active plan ID + remind that `/goal clear` cancels.
 
-If `task_plan.md` does not exist, refuse and direct user to run `/plan` first.
+If no plan is bound to this session, refuse and direct the user to `/plan` (new) or `/plan-attach` (existing).
 
 Why this exists:
 

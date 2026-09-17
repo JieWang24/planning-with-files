@@ -1,124 +1,305 @@
 #!/usr/bin/env bash
-# 初始化新会话的规划文件
-# 用法：./init-session.sh [项目名称]
+# Initialize planning files for a new session.
+#
+# Usage:
+#   ./init-session.sh                              # legacy: root-level task_plan.md, findings.md, progress.md
+#   ./init-session.sh [--template TYPE]            # legacy with template choice
+#   ./init-session.sh "Backend Refactor"           # slug mode: .planning/<date>-backend-refactor/
+#   ./init-session.sh --plan-dir                   # slug mode with auto-generated untitled-<short> name
+#   ./init-session.sh --plan-dir "Quick Spike"     # slug mode, explicit slug
+#
+# Slug mode writes each plan under .planning/<date>-<slug>/, records it as the
+# project's most recently created plan (.planning/.active_plan) and — inside a
+# Claude Code session (PWF_SESSION_ID / CLAUDE_CODE_SESSION_ID) — atomically binds
+# THIS session to it via .planning/sessions/<session-id>.active_plan. It prints
+# machine-readable PLAN_ROOT= / PLAN_ID= lines that the PostToolUse hook also
+# uses to bind the session when no session id is visible to the script.
+#
+# Legacy mode (zero positional args, no --plan-dir) keeps v1.x root-level files
+# for plain terminals; inside a Claude Code session it switches to slug mode.
 
 set -e
 
-PROJECT_NAME="${1:-project}"
+TEMPLATE="default"
+PROJECT_NAME=""
+USE_PLAN_DIR=0
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --template|-t)
+            TEMPLATE="$2"
+            shift 2
+            ;;
+        --plan-dir)
+            USE_PLAN_DIR=1
+            shift
+            ;;
+        *)
+            if [ -z "$PROJECT_NAME" ]; then
+                PROJECT_NAME="$1"
+            else
+                PROJECT_NAME="$PROJECT_NAME $1"
+            fi
+            shift
+            ;;
+    esac
+done
+
 DATE=$(date +%Y-%m-%d)
 
-echo "正在初始化规划文件：$PROJECT_NAME"
-
-# 如果 task_plan.md 不存在则创建
-if [ ! -f "task_plan.md" ]; then
-    cat > task_plan.md << 'EOF'
-# 任务计划：[简要描述]
-
-## 目标
-[用一句话描述最终状态]
-
-## 当前阶段
-阶段 1
-
-## 各阶段
-
-### 阶段 1：需求与发现
-- [ ] 理解用户意图
-- [ ] 确定约束条件和需求
-- [ ] 将发现记录到 findings.md
-- **状态：** in_progress
-
-### 阶段 2：规划与结构
-- [ ] 确定技术方案
-- [ ] 如有需要创建项目结构
-- [ ] 记录决策及理由
-- **状态：** pending
-
-### 阶段 3：实现
-- [ ] 按计划逐步执行
-- [ ] 先将代码写入文件再执行
-- [ ] 增量测试
-- **状态：** pending
-
-### 阶段 4：测试与验证
-- [ ] 验证所有需求已满足
-- [ ] 将测试结果记录到 progress.md
-- [ ] 修复发现的问题
-- **状态：** pending
-
-### 阶段 5：交付
-- [ ] 检查所有输出文件
-- [ ] 确保交付物完整
-- [ ] 交付给用户
-- **状态：** pending
-
-## 已做决策
-| 决策 | 理由 |
-|------|------|
-
-## 遇到的错误
-| 错误 | 解决方案 |
-|------|---------|
-EOF
-    echo "已创建 task_plan.md"
-else
-    echo "task_plan.md 已存在，跳过"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+SKILL_ROOT="$(dirname "$SCRIPT_DIR")"
+TEMPLATE_DIR="$SKILL_ROOT/templates"
+if [ -f "$SCRIPT_DIR/session-lib.sh" ]; then
+    # shellcheck source=session-lib.sh
+    . "$SCRIPT_DIR/session-lib.sh"
+fi
+SESSION_ID=""
+if command -v pwf_session_id >/dev/null 2>&1; then
+    SESSION_ID="$(pwf_session_id)"
 fi
 
-# 如果 findings.md 不存在则创建
-if [ ! -f "findings.md" ]; then
-    cat > findings.md << 'EOF'
-# 发现与决策
-
-## 需求
--
-
-## 研究发现
--
-
-## 技术决策
-| 决策 | 理由 |
-|------|------|
-
-## 遇到的问题
-| 问题 | 解决方案 |
-|------|---------|
-
-## 资源
--
-EOF
-    echo "已创建 findings.md"
-else
-    echo "findings.md 已存在，跳过"
+if [ "$TEMPLATE" != "default" ] && [ "$TEMPLATE" != "analytics" ]; then
+    echo "Unknown template: $TEMPLATE (available: default, analytics). Using default."
+    TEMPLATE="default"
 fi
 
-# 如果 progress.md 不存在则创建
-if [ ! -f "progress.md" ]; then
-    cat > progress.md << EOF
-# 进度日志
-
-## 会话：$DATE
-
-### 当前状态
-- **阶段：** 1 - 需求与发现
-- **开始时间：** $DATE
-
-### 已执行操作
--
-
-### 测试结果
-| 测试 | 预期 | 实际 | 状态 |
-|------|------|------|------|
-
-### 错误
-| 错误 | 解决方案 |
-|------|---------|
-EOF
-    echo "已创建 progress.md"
-else
-    echo "progress.md 已存在，跳过"
+# Slug mode triggers when a project name was given OR --plan-dir was passed.
+SLUG_MODE=0
+if [ -n "$PROJECT_NAME" ] || [ "$USE_PLAN_DIR" -eq 1 ] || [ -n "$SESSION_ID" ]; then
+    SLUG_MODE=1
 fi
 
-echo ""
-echo "规划文件已初始化！"
-echo "文件：task_plan.md, findings.md, progress.md"
+slugify() {
+    # Lowercase, non-alphanumerics → '-', collapse repeats, trim leading/trailing '-'
+    printf '%s' "$1" \
+        | tr '[:upper:]' '[:lower:]' \
+        | sed -e 's/[^a-z0-9]/-/g' -e 's/-\{2,\}/-/g' -e 's/^-//' -e 's/-$//' \
+        | cut -c1-40
+}
+
+short_uuid() {
+    # Probe each candidate: command -v alone is not enough on Windows because
+    # App Execution Aliases report presence but exit non-zero when run.
+    _py="${PYTHON_BIN:-}"
+    if [ -z "$_py" ]; then
+        for _c in python3 python py; do
+            if command -v "$_c" >/dev/null 2>&1 && "$_c" -c "import uuid" >/dev/null 2>&1; then
+                _py="$_c"
+                break
+            fi
+        done
+    fi
+    if [ -n "$_py" ]; then
+        "$_py" -c "import uuid; print(uuid.uuid4().hex[:8])"
+        return
+    fi
+    if command -v uuidgen >/dev/null 2>&1; then
+        uuidgen | tr '[:upper:]' '[:lower:]' | tr -d '-' | cut -c1-8
+        return
+    fi
+    # Last-ditch: seconds timestamp as 8 hex chars
+    printf '%08x' "$(date +%s)" | cut -c1-8
+}
+
+write_default_task_plan() {
+    printf '# Task Plan: %s\n' "${PROJECT_NAME:-[Brief Description]}" > "$1"
+    cat >> "$1" << 'EOF'
+
+## Goal
+[One sentence describing the end state]
+
+## Current Phase
+Phase 1
+
+## Phases
+
+### Phase 1: Requirements & Discovery
+- [ ] Understand user intent
+- [ ] Identify constraints
+- [ ] Document in findings.md
+- **Status:** in_progress
+
+### Phase 2: Planning & Structure
+- [ ] Define approach
+- [ ] Create project structure
+- **Status:** pending
+
+### Phase 3: Implementation
+- [ ] Execute the plan
+- [ ] Write to files before executing
+- **Status:** pending
+
+### Phase 4: Testing & Verification
+- [ ] Verify requirements met
+- [ ] Document test results
+- **Status:** pending
+
+### Phase 5: Delivery
+- [ ] Review outputs
+- [ ] Deliver to user
+- **Status:** pending
+
+## Decisions Made
+| Decision | Rationale |
+|----------|-----------|
+
+## Errors Encountered
+| Error | Resolution |
+|-------|------------|
+EOF
+}
+
+write_default_findings() {
+    cat > "$1" << 'EOF'
+# Findings & Decisions
+
+## Requirements
+-
+
+## Research Findings
+-
+
+## Technical Decisions
+| Decision | Rationale |
+|----------|-----------|
+
+## Issues Encountered
+| Issue | Resolution |
+|-------|------------|
+
+## Resources
+-
+EOF
+}
+
+write_default_progress() {
+    local date_value="$1"
+    local target="$2"
+    cat > "$target" << EOF
+# Progress Log
+
+## Session: $date_value
+
+### Current Status
+- **Phase:** 1 - Requirements & Discovery
+- **Started:** $date_value
+
+### Actions Taken
+-
+
+### Test Results
+| Test | Expected | Actual | Status |
+|------|----------|--------|--------|
+
+### Errors
+| Error | Resolution |
+|-------|------------|
+EOF
+}
+
+write_analytics_progress() {
+    local date_value="$1"
+    local target="$2"
+    cat > "$target" << EOF
+# Progress Log
+
+## Session: $date_value
+
+### Current Status
+- **Phase:** 1 - Data Discovery
+- **Started:** $date_value
+
+### Actions Taken
+-
+
+### Query Log
+| Query | Result Summary | Interpretation |
+|-------|---------------|----------------|
+
+### Errors
+| Error | Resolution |
+|-------|------------|
+EOF
+}
+
+create_files_in() {
+    local target_dir="$1"
+    local plan_path="$target_dir/task_plan.md"
+    local findings_path="$target_dir/findings.md"
+    local progress_path="$target_dir/progress.md"
+
+    if [ ! -f "$plan_path" ]; then
+        if [ "$TEMPLATE" = "analytics" ] && [ -f "$TEMPLATE_DIR/analytics_task_plan.md" ]; then
+            cp "$TEMPLATE_DIR/analytics_task_plan.md" "$plan_path"
+        else
+            write_default_task_plan "$plan_path"
+        fi
+        echo "Created $plan_path"
+    else
+        echo "$plan_path already exists, skipping"
+    fi
+
+    if [ ! -f "$findings_path" ]; then
+        if [ "$TEMPLATE" = "analytics" ] && [ -f "$TEMPLATE_DIR/analytics_findings.md" ]; then
+            cp "$TEMPLATE_DIR/analytics_findings.md" "$findings_path"
+        else
+            write_default_findings "$findings_path"
+        fi
+        echo "Created $findings_path"
+    else
+        echo "$findings_path already exists, skipping"
+    fi
+
+    if [ ! -f "$progress_path" ]; then
+        if [ "$TEMPLATE" = "analytics" ]; then
+            write_analytics_progress "$DATE" "$progress_path"
+        else
+            write_default_progress "$DATE" "$progress_path"
+        fi
+        echo "Created $progress_path"
+    else
+        echo "$progress_path already exists, skipping"
+    fi
+}
+
+if [ "$SLUG_MODE" -eq 1 ]; then
+    SLUG="$(slugify "$PROJECT_NAME")"
+    if [ -z "$SLUG" ]; then
+        SLUG="untitled-$(short_uuid)"
+    fi
+    BASE_ID="${DATE}-${SLUG}"
+    PLAN_ID="$BASE_ID"
+    PLAN_ROOT="${PWD}/.planning"
+    counter=2
+    while [ -d "${PLAN_ROOT}/${PLAN_ID}" ]; do
+        PLAN_ID="${BASE_ID}-${counter}"
+        counter=$((counter + 1))
+    done
+    PLAN_DIR="${PLAN_ROOT}/${PLAN_ID}"
+    mkdir -p "$PLAN_DIR"
+
+    echo "Initializing planning files for: ${PROJECT_NAME:-untitled} (template: $TEMPLATE)"
+    create_files_in "$PLAN_DIR"
+    printf "%s\n" "$PLAN_ID" > "${PLAN_ROOT}/.active_plan"
+    echo ""
+    echo "PLAN_ROOT=$PLAN_ROOT"
+    echo "PLAN_ID=$PLAN_ID"
+    if [ -n "$SESSION_ID" ] && pwf_bind_session "$PWD" "$SESSION_ID" "$PLAN_ID"; then
+        echo "[planning-with-files] This Claude session ($SESSION_ID) is now bound to $PLAN_ID."
+    else
+        echo "[planning-with-files] No session id visible here; the PostToolUse hook binds the calling Claude session."
+        echo "  (plain terminal: export PLAN_ID=$PLAN_ID to pin this shell)"
+    fi
+    echo "Canonical files — read & update ONLY these for this task:"
+    echo "  task_plan : $PLAN_DIR/task_plan.md"
+    echo "  findings  : $PLAN_DIR/findings.md"
+    echo "  progress  : $PLAN_DIR/progress.md"
+else
+    PROJECT_NAME="${PROJECT_NAME:-project}"
+    echo "Initializing planning files for: $PROJECT_NAME (template: $TEMPLATE)"
+    create_files_in "$(pwd)"
+    echo ""
+    echo "Planning files initialized!"
+    echo "Files: task_plan.md, findings.md, progress.md"
+fi

@@ -7,13 +7,13 @@ allowed-tools: "Bash"
 Run the plan attestation helper for the active plan.
 
 Steps:
-1. Resolve the active plan: prefer `${PLAN_ID}` env var, then `.planning/.active_plan`, then newest `.planning/<dir>/`, then legacy `./task_plan.md`.
+1. Resolve THIS session's plan: run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/session-plan.sh" path` (exit code 1 = no plan bound). Never use `.planning/.active_plan` or another plan directory; a legacy root `./task_plan.md` is only valid in a project without `.planning/`.
 2. Compute the SHA-256 of the resolved `task_plan.md`.
 3. Write the hex digest to `.planning/<active-plan>/.attestation` (parallel-plan mode) or `./.plan-attestation` (legacy mode).
 4. Confirm to the user with the short hash (first 12 hex chars) and the storage path.
 
 Implementation:
-- On Linux/macOS/Git Bash: `sh ${CLAUDE_PLUGIN_ROOT}/scripts/attest-plan.sh`
+- On Linux/macOS/Git Bash: `sh "${CLAUDE_PLUGIN_ROOT}/scripts/attest-plan.sh"` (inside Claude Code it attests the plan bound to this session and refuses when none is bound)
 - On Windows PowerShell: `& "$env:USERPROFILE\.claude\skills\planning-with-files\scripts\attest-plan.ps1"`
 
 Flags:

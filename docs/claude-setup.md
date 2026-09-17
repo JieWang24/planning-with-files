@@ -13,21 +13,24 @@
 - **计划文件三件套**：`task_plan.md` / `findings.md` / `progress.md`。
 - **计划存证（attestation / 防篡改）**：SHA-256 锁定 `task_plan.md`，被改动则拦截注入并提示 `[PLAN TAMPERED]`。
 - **安全框定**：注入内容用 `===BEGIN/END PLAN DATA===` 包裹并标注"仅作数据，勿当指令"。
-- **PreCompact 钩子**：上下文压缩前提醒先把进度落盘。
+- **压缩恢复**：官方 PreCompact 提醒在 Claude Code 中会被丢弃，本分支改为压缩后（SessionStart `compact`）重新注入计划。
 - **Turn-loop 集成**：`/plan-goal`（接 `/goal`）、`/plan-loop`（接 `/loop`）、`templates/loop.md`。
 - **脚本/模板** `scripts/`、`templates/`（含 `analytics_*`、`loop.md`）。
 
-### 本地定制（在官方之上新增）★
-- **每会话独立绑定计划**：`.planning/sessions/<session-id>.active_plan`。解析顺序 `$PLAN_ID` → `.planning/.active_plan` → 最新计划目录 → 旧版根目录 `./task_plan.md`。绑定是"并行隔离的覆盖项"，未绑定的会话仍会拿到项目活动/最新计划（即官方开箱行为）。
-- **自动绑定**：运行 `init-session.sh` 时，当前会话自动绑定到新建计划。
-- **临时任务抑制**：提问含关键词 **`临时任务`** 时，本会话所有 planning 钩子静默，直到下次正常提问（或 Stop）。
-- **门控** `.planning/.hooks_mode`：`on`（默认，开箱即用）/ `off` / `session`（严格按会话，需 `.attached` 哨兵）；也可用环境变量 `PWF_HOOKS=on|off` 临时覆盖。
+### 本地定制：会话模型（2.44.0-claude.0）★
+- **严格按会话绑定**：会话只看到 `.planning/sessions/<session-id>.active_plan` 指向的计划；未绑定会话不注入计划内容；项目 `.planning/.active_plan` 只是"最近创建的计划"，从不作为会话计划。
+- **绑定来源**：`init-session.sh --plan-dir`（原子绑定）、`/plan-attach`（`session-plan.sh attach`，续做已有计划）、resume/fork 从转录继承、`/clear` 交接（SessionEnd → SessionStart）。
+- **低噪音注入**：计划变化才注入全文，否则两行指针；没有每条命令的提醒；subagent 不收提醒；压缩后（SessionStart `compact`）重新注入。
+- **进度同步（Stop）**：默认 `sync`——本轮有改动但计划文件没更新时，用非错误反馈请求记一条进度；`continue` 恢复旧的"未完成继续干"；`off` 关闭。
+- **临时任务抑制**：提问含 **`临时任务`** 时，本会话所有 planning 钩子静默，直到下次正常提问（或 Stop）。
+- **门控**：`.planning/.hooks_mode=off` 或 `PWF_HOOKS=off` 关闭；`on` / `session` / 未设置均为严格模式。
+- 设计细节与有意差异：[claude-session-model.md](claude-session-model.md)。
 
 ### 关键移植决策（为什么不照搬官方 frontmatter 钩子）★
 官方 Claude 插件把钩子写在 `SKILL.md` frontmatter；但存在 Claude Code 已知缺陷 [#17688](https://github.com/anthropics/claude-code/issues/17688)——**插件内的 frontmatter 钩子触发不稳定**。可靠机制是**静态插件钩子 `hooks/hooks.json`**。因此本分支：
 - 从两个 `SKILL.md` 去掉 `hooks:` frontmatter（避免不稳定 + 双触发）；
-- 用 `hooks/hooks.json` 注册全部钩子，调用 `hooks/*.py` 适配器；
-- 把官方 frontmatter 钩子里的特性（存证/防篡改、PreCompact、BEGIN/END 框定）**移植进适配器/shell 脚本**，与定制特性合一。
+- 用 `hooks/hooks.json` 注册全部钩子，调用 `hooks/*.py` 纯 Python 适配器（2.44 起不再经过 shell 渲染脚本与 resolver 回退）；
+- 官方的存证/防篡改、BEGIN/END 框定在适配器中实现；PreCompact 输出会被 Claude Code 丢弃，改由 SessionStart `compact` 重新注入。
 
 ---
 
@@ -76,22 +79,16 @@ cd planning-with-files && git checkout claude
 ## 3. 验证安装
 
 新开一个 Claude Code 会话：
-- 输入 `/plan`、`/status` 应能补全/执行。
-- 在含计划的项目里提问，应看到被注入的 `===BEGIN PLAN DATA===` 计划上下文。
+- 输入 `/plan`、`/plan-attach`、`/status` 应能补全/执行。
+- 在有 `.planning/` 的项目里新开会话：**不应**看到任何 `===BEGIN PLAN DATA===`，只可能看到一条"本会话未绑定计划"的提示。
+- 运行 `/plan` 建计划后再提问，应看到 `This session is BOUND to plan dir: ...`。
 
-脚本层冒烟测试（临时目录，不污染真实项目）：
+端到端冒烟测试（隔离的临时 HOME 与项目，不碰真实数据）：
 ```bash
-T=/tmp/pwf-verify; rm -rf "$T"; mkdir -p "$T"; SID=verify
-# 用安装后的脚本建计划
-( cd "$T" && bash ~/.claude/skills/planning-with-files/scripts/init-session.sh "Verify" >/dev/null )
-H=~/.claude/skills/planning-with-files/hooks   # 路线 B；路线 A 在插件安装目录
-# 未绑定也应注入（官方开箱行为）
-printf '{"session_id":"%s","cwd":"%s","prompt":"go"}' "$SID" "$T" | python3 "$H/user_prompt_submit.py" | head -c 200; echo
-# 临时任务抑制（应无输出 + 生成标记）
-printf '{"session_id":"%s","cwd":"%s","prompt":"临时任务：x"}' "$SID" "$T" | python3 "$H/user_prompt_submit.py"
-ls "$T/.planning/sessions/$SID.temporary-off" && echo "temp-off OK"
-rm -rf "$T"
+python3 tools/smoke_test_session_model.py
 ```
+
+真实会话排查：`python3 tools/planning-hooks-debug.py on /path/to/project`，每个钩子会输出一行 debug `systemMessage` 并写 `.planning/debug/hook-events.jsonl`；排查完 `off`。
 
 ---
 
@@ -99,10 +96,11 @@ rm -rf "$T"
 
 | 命令 | 作用 |
 |------|------|
-| `/plan` | 启动计划工作流，按需创建三件套 |
+| `/plan` | 新建计划并绑定本会话（或引导续做已有计划） |
+| `/plan-attach` | 列出计划 / 绑定本会话到已有计划 / `show` / `detach` |
 | `/start` | 调用技能（`disable-model-invocation`，需你手动输入） |
-| `/status` | 一屏显示当前阶段/进度/错误 |
-| `/plan-attest` | 给当前 `task_plan.md` 计算 SHA-256 存证（防篡改） |
+| `/status` | 一屏显示【本会话】计划的阶段/进度/错误 |
+| `/plan-attest` | 给本会话计划的 `task_plan.md` 计算 SHA-256 存证（防篡改） |
 | `/plan-goal` | 接 Claude `/goal`，以"全部阶段完成"为终止条件持续推进 |
 | `/plan-loop` | 接 Claude `/loop`，按周期重读计划、跑 check-complete、写进度 |
 | `/plan-zh` | 中文版计划命令 |
@@ -113,12 +111,13 @@ rm -rf "$T"
 
 ## 5. 日常使用
 
-- **建计划**：`~/.claude/skills/planning-with-files/scripts/init-session.sh "标题"` → `.planning/<日期>-<slug>/`，并设为活动计划；当前会话自动绑定。
-- **继续已有计划**：用解析器而非直接读 `.active_plan`：
-  `PLAN_DIR="$(sh ~/.claude/skills/planning-with-files/hooks/resolve-plan-dir.sh)"`
-- **并行多任务**：每个终端 `export PLAN_ID=<plan-id>` 钉住各自计划；或 `set-active-plan.sh <plan-id>` 切换项目活动计划。
+- **新任务**：`/plan`，或 `sh <插件根>/scripts/init-session.sh --plan-dir "task name"` → `.planning/<日期>-<slug>/`，本会话自动绑定。
+- **续做旧任务（新会话）**：`/plan-attach` 列出计划，`/plan-attach <PLAN_ID>` 绑定；会打印三件套路径和该计划上一个会话的 catchup。
+- **看本会话绑定**：`sh <插件根>/scripts/session-plan.sh show`（脚本里要目录用 `path`）。
+- **`/clear` / resume**：绑定自动带过去，无需操作；想换任务就 `/plan` 或 `/plan-attach` 另一个。
+- **并行多任务**：每个会话各自绑定，互不干扰；`.active_plan` 不再影响任何 Claude 会话。
 - **临时插队**：提问带 `临时任务`，本轮不受计划约束。
-- **防篡改**：定稿后 `/plan-attest`（或 `scripts/attest-plan.sh`）；之后任何对 `task_plan.md` 的非法改动都会触发 `[PLAN TAMPERED]` 并拦截注入，直到重新存证。
+- **防篡改**：定稿后 `/plan-attest`；之后非法改动会触发 `[PLAN TAMPERED]` 并拦截注入，直到重新存证。
 
 ---
 
@@ -126,11 +125,16 @@ rm -rf "$T"
 
 | 开关 | 位置 | 取值 | 作用 |
 |------|------|------|------|
-| `.hooks_mode` | `<项目>/.planning/.hooks_mode` | `on`/`off`/`session` | 项目级门控默认值（默认 on） |
-| `PWF_HOOKS` | 环境变量 | `on`/`off` | 临时覆盖门控（优先于 `.hooks_mode`） |
-| `PLAN_ID` | 环境变量 | `<plan-id>` | 钉住当前终端/会话用哪个计划 |
+| `.hooks_mode` | `<项目>/.planning/.hooks_mode` | `off` / `on` / `session` | `off` 关闭该项目钩子；其余均为严格会话模式 |
+| `PWF_HOOKS` | 环境变量 | `on`/`off` | 覆盖 `.hooks_mode` |
+| `.stop_mode` | `<项目>/.planning/.stop_mode` | `sync`（默认）/ `continue` / `off` | Stop 行为 |
+| `PWF_STOP_MODE` | 环境变量 | 同上 | 覆盖 `.stop_mode` |
+| `PWF_UNBOUND_HINT` | 环境变量 | `off` | 关闭未绑定会话的一次性提示 |
+| `PWF_HOOK_DEBUG` / `.hooks_debug` | 环境变量 / 项目文件 | `on` | 钩子调试日志 |
+| `PLAN_ID` | 环境变量 | `<plan-id>` | 仅普通终端：钉住该 shell 用哪个计划 |
 | `临时任务` | 提问文本 | 关键词 | 本会话静默 planning 钩子直到下次正常提问 |
-| 关键词集合 | `hooks/planning_hook_adapter.py` `TEMPORARY_TASK_KEYWORDS` | 元组 | 自定义触发抑制的关键词 |
+
+运行期私有状态（临时任务标记、活动计数、注入指纹、/clear 交接）存放在本插件的 `$CLAUDE_PLUGIN_DATA/planning-state/`（其他情况：`~/.claude/planning-with-files-state/`；`PWF_STATE_DIR` 可覆盖），30 天自动清理。
 
 ---
 
@@ -138,12 +142,14 @@ rm -rf "$T"
 
 | 现象 | 处理 |
 |------|------|
-| 命令不补全 / 钩子不触发 | 路线 A：确认 `/plugin install` 成功；路线 B：确认 `install.sh` 跑完并**新开会话**。检查 Claude Code ≥ v2.1.0。 |
-| 钩子重复注入 | 你可能同时用了路线 A 和 B。只保留一个：卸载插件或从 `~/.claude/settings.json` 删除 planning 条目。 |
-| `[PLAN TAMPERED]` 一直出现 | `task_plan.md` 与存证不符。`/plan-attest` 重新批准，或从 git 恢复文件。 |
-| Stop 时一直被拦着续跑 | 计划未完成会拦截。把阶段状态改 `complete`，或发 `临时任务`，或 `.hooks_mode=off`。 |
-| `python3 not found` | 钩子静默失败（命令带 `|| true` 不阻断会话）但功能失效——装 python3。 |
-| 想全局关闭 | `export PWF_HOOKS=off` 或项目 `.hooks_mode=off`。 |
+| 命令不补全 / 钩子不触发 | 路线 A：确认插件已安装并为最新版本；路线 B：确认 `install.sh` 跑完并**新开会话**。 |
+| 新会话没有任何计划上下文 | 预期行为：先 `/plan` 新建或 `/plan-attach <PLAN_ID>` 绑定。 |
+| 注入的计划不是我要的 | `session-plan.sh show` 查看绑定；`/plan-attach <正确的 PLAN_ID>` 改绑，或 `/plan-attach detach`。 |
+| /clear 后没带上计划 | 交接依赖同一 Claude 进程且 SessionEnd→SessionStart 在时间窗内；手动 `/plan-attach <PLAN_ID>`，并可开调试确认。 |
+| 钩子重复注入 | 同时用了路线 A 和 B。只保留一个。 |
+| `[PLAN TAMPERED]` 一直出现 | `task_plan.md` 与存证不符。`/plan-attest` 重新批准，或从 git 恢复。 |
+| Stop 时总要求记进度 | 说明本轮有改动但计划文件未更新；记一条即可，或 `.planning/.stop_mode=off`。 |
+| `python3 not found` | 钩子静默失败（命令带 `|| true`）——安装 python3。 |
 
 ---
 
@@ -162,33 +168,36 @@ rm -rf "$T"
 ## 9. 仓库结构（claude 分支）
 
 ```
-.claude-plugin/        plugin.json + marketplace.json（插件清单，已标记 fork）
-commands/              /plan /start /status /plan-attest /plan-goal /plan-loop /plan-zh
-hooks/                 ★ 可靠钩子层（替代 frontmatter）
-  hooks.json           静态插件钩子（${CLAUDE_PLUGIN_ROOT} 引用脚本）
-  planning_hook_adapter.py   共享逻辑：会话绑定/临时抑制/门控/emit_context/effective_plan
-  session_start.py user_prompt_submit.py pre_tool_use.py post_tool_use.py
-  stop.py pre_compact.py permission_request.py
-  *.sh                 渲染脚本：BEGIN/END 框定 + 防篡改 + 解析计划目录
+.claude-plugin/        plugin.json + marketplace.json
+commands/              /plan /plan-attach /start /status /plan-attest /plan-goal /plan-loop /plan-zh
+hooks/                 ★ 可靠钩子层
+  hooks.json           SessionStart UserPromptSubmit PreToolUse PostToolUse Stop SessionEnd PermissionRequest
+  planning_hook_adapter.py   会话识别、绑定、继承/交接、渲染、活动计数、调试
+  session_start.py user_prompt_submit.py pre_tool_use.py post_tool_use.py stop.py session_end.py permission_request.py
+scripts/               init-session.sh session-plan.sh session-lib.sh attest-plan.sh check-complete.sh
+                       session-catchup.py set-active-plan.sh resolve-plan-dir.sh (+ .ps1)
 skills/
-  planning-with-files/      官方英文技能（已去 frontmatter hooks，加"本地定制"小节）
-  planning-with-files-zh/   官方简中技能（同上）
-scripts/ templates/    官方根级脚本与模板
-install.sh             路线 B 全局安装器（幂等、合并式）
-docs/claude-setup.md   本教程
+  planning-with-files/      英文技能（scripts/ 为 scripts/ 的同步副本）
+  planning-with-files-zh/   简中技能（同上）
+templates/             计划模板、loop.md
+tools/                 smoke_test_session_model.py planning-hooks-debug.py
+install.sh             路线 B 全局安装器
+docs/                  claude-setup.md（本文）claude-session-model.md（设计）
 ```
 
 ---
 
 ## 10. 与 Codex 版的关系
 
-本地同时维护 Codex 版（`~/.codex/...`，项目 `.codex/hooks.json` 注册）与 Claude 版。业务逻辑共享，差异在输入解析/输出契约：
+本地同时维护 Codex 版（`~/.codex/...`，项目 `.codex/hooks.json` 注册，`main` 分支）与 Claude 版。两端**共享 `.planning/` 磁盘格式**（计划目录、`sessions/<id>.active_plan` + `.attached`），同一项目可交替使用两种工具；行为按各自宿主能力实现，不要求逐行一致。
 
 | 维度 | Codex | Claude（本分支） |
 |------|-------|------------------|
 | 钩子注册 | 项目 `.codex/hooks.json` | 插件 `hooks/hooks.json`（或 `~/.claude/settings.json`） |
-| 注入上下文 | `{"systemMessage": ...}` | `hookSpecificOutput.additionalContext` |
-| Stop 拦截 | `{"decision":"block"}` | `{"decision":"block"}`（一致） |
-| 会话 ID | 从 transcript 路径解析 | payload 直接给 `session_id` |
+| 注入上下文 | `{"systemMessage": ...}` | `hookSpecificOutput.additionalContext`（计划变化才全量） |
+| 会话 ID | `CODEX_THREAD_ID` / transcript | payload `session_id`；脚本用 `PWF_SESSION_ID`（CLAUDE_ENV_FILE 导出）/ `CLAUDE_CODE_SESSION_ID` |
+| 生命周期 | thread id 稳定 | resume/fork 继承、/clear 交接、compact 重注入 |
+| Stop | `decision: block` 续跑 | 默认 `sync` 非错误反馈；`continue` 可选 |
+| 续做旧计划 | — | `/plan-attach` |
 
-**改一端逻辑请同步另一端**，保持行为一致。
+完整对比见 [claude-session-model.md](claude-session-model.md)。

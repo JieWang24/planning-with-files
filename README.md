@@ -1,7 +1,7 @@
-# planning-with-files — Claude Code 插件（官方功能 + 本地定制）
+# planning-with-files — Claude Code 插件（官方功能 + 会话模型定制）
 
-> 分支 `claude`：[官方 planning-with-files](https://github.com/OthmanAdi/planning-with-files) 的 **Claude Code 插件** + 本地定制功能。
-> 用持久化 Markdown（`task_plan.md` / `findings.md` / `progress.md`）作为 AI 的"磁盘工作记忆"，通过 hooks 在提问 / 工具调用 / 停止 / 压缩前自动重注入计划上下文。
+> 分支 `claude`：[官方 planning-with-files](https://github.com/OthmanAdi/planning-with-files) 的 **Claude Code 插件** + 本地定制。
+> 用持久化 Markdown（`task_plan.md` / `findings.md` / `progress.md`）作为 AI 的"磁盘工作记忆"；hooks 只把**绑定到当前会话的计划**注入上下文。
 
 ## 安装（二选一，勿同时用）
 
@@ -17,37 +17,40 @@ git clone git@github.com:JieWang24/planning-with-files.git
 cd planning-with-files && git checkout claude
 ./install.sh        # 装进 ~/.claude：技能 + 命令 + 可靠 hooks（幂等、合并式）
 ```
-装完**新开会话**。完整步骤/原理/验证/故障排查见 **[docs/claude-setup.md](docs/claude-setup.md)**。
+装完**新开会话**。完整步骤/验证/故障排查见 **[docs/claude-setup.md](docs/claude-setup.md)**；设计与变更见 **[docs/claude-session-model.md](docs/claude-session-model.md)**。
+
+## 会话模型（2.44.0-claude.0）
+
+- **每个会话只处理绑定到它的计划**：`.planning/sessions/<session-id>.active_plan`。未绑定会话不注入任何计划内容；项目 `.planning/.active_plan` 只是"最近创建的计划"，永远不作为会话计划。
+- **绑定方式**：`init-session.sh --plan-dir "<任务名>"`（新建并绑定）、`/plan-attach <PLAN_ID>`（续做已有计划）、resume/fork 自动继承、`/clear` 自动交接。
+- **低噪音**：计划变化才注入全文，否则两行指针；无每命令提醒；subagent 不提醒；压缩后自动重注入。
+- **进度同步**：Stop 默认 `sync`——本轮有改动却没更新计划文件时，以非错误反馈请求记一条进度；`continue` 模式可恢复"未完成就继续"。
+- **临时任务**：提问含 `临时任务`，本会话 planning 钩子静默到下次正常提问。
+- **按计划过滤的 catchup**、会话感知的 `/status` `/plan-attest` `/plan-goal` `/plan-loop`。
 
 ## 来自官方（保留）
 
-- 插件包装 `.claude-plugin/`、斜杠命令 `/plan` `/start` `/status` `/plan-attest` `/plan-goal` `/plan-loop` `/plan-zh`
-- 计划存证/防篡改（SHA-256，`[PLAN TAMPERED]`）、安全框定（`===BEGIN/END PLAN DATA===`）、**PreCompact** 钩子、Turn-loop 集成（`/goal` `/loop`）
-- 英文技能 + 简体中文技能、`scripts/`、`templates/`（含 `analytics_*`、`loop.md`）
-
-## 本地定制（在官方之上新增）
-
-- **每会话独立绑定计划**：`.planning/sessions/<session-id>.active_plan`，并行会话互不串计划（未绑定仍走官方开箱行为）。
-- **自动绑定**：运行 `init-session.sh` 时当前会话自动绑定到新计划。
-- **临时任务抑制**：提问含 `临时任务` 时本会话钩子静默，直到下次正常提问。
-- **门控**：`.planning/.hooks_mode`（`on`/`off`/`session`）或 `PWF_HOOKS` 环境变量。
+- 插件包装 `.claude-plugin/`、斜杠命令 `/plan` `/start` `/status` `/plan-attest` `/plan-goal` `/plan-loop` `/plan-zh`（本 fork 新增 `/plan-attach`）
+- 计划存证/防篡改（SHA-256，`[PLAN TAMPERED]`）、安全框定（`===BEGIN/END PLAN DATA===`）、Turn-loop 集成（`/goal` `/loop`）
+- 英文技能 + 简体中文技能、`scripts/`、`templates/`
 
 ## 关键移植决策
 
-官方把 hooks 写在 `SKILL.md` frontmatter，但 Claude Code 缺陷 [#17688](https://github.com/anthropics/claude-code/issues/17688) 导致插件内 frontmatter 钩子触发不稳定。本分支改用**可靠的 `hooks/hooks.json`**（静态插件钩子）调用 Python 适配器，并把官方 frontmatter 钩子里的特性（存证、PreCompact、安全框定）与定制特性一并融合进适配器。
+官方把 hooks 写在 `SKILL.md` frontmatter，但 Claude Code 缺陷 [#17688](https://github.com/anthropics/claude-code/issues/17688) 导致插件内 frontmatter 钩子触发不稳定。本分支用**可靠的 `hooks/hooks.json`** 调用纯 Python 适配器实现全部 hook 行为。
 
 ## 仓库结构
 
 | 路径 | 说明 |
 |------|------|
-| `.claude-plugin/` | 插件清单（plugin.json / marketplace.json，已标记 fork） |
-| `commands/` | 斜杠命令（英文 + `/plan-zh`） |
-| `hooks/` | ★ 可靠钩子层：`hooks.json` + Python 适配器 + 渲染脚本 |
-| `skills/planning-with-files[/-zh]` | 官方技能（去 frontmatter hooks，加"本地定制"小节） |
-| `scripts/` · `templates/` | 官方根级脚本与模板 |
-| `install.sh` | 路线 B 全局安装器（幂等、合并式） |
-| `docs/claude-setup.md` | 详细教程 |
+| `.claude-plugin/` | 插件清单（plugin.json / marketplace.json） |
+| `commands/` | 斜杠命令（含 `/plan-attach`、`/plan-zh`） |
+| `hooks/` | ★ `hooks.json` + Python 适配器与各 hook 入口 |
+| `scripts/` | `init-session.sh`、`session-plan.sh`、`session-lib.sh`、存证/检查/catchup 等（`skills/*/scripts/` 为同步副本） |
+| `skills/planning-with-files[/-zh]` | 英文 / 中文技能 |
+| `templates/` | 计划模板、`loop.md` |
+| `tools/` | `smoke_test_session_model.py`、`planning-hooks-debug.py` |
+| `install.sh` | 路线 B 全局安装器 |
 
-## 同步说明
+## 与 Codex 版的关系
 
-本地同时维护 Codex 版（`~/.codex/...`）与 Claude 版。逻辑共享，仅输入解析/输出契约不同。**改一端逻辑请同步另一端。**
+本地同时维护 Codex 版（`~/.codex/...`，`main` 分支）与 Claude 版。两端共享 `.planning/` 的**磁盘格式**（计划目录、`sessions/<id>.active_plan` + `.attached`），但各自按宿主能力实现行为；Claude 端的有意差异见 [docs/claude-session-model.md §2.6](docs/claude-session-model.md)。

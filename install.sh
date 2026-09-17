@@ -53,7 +53,7 @@ if [ -d "$SKILL_DIR" ]; then
 fi
 cp -R "$REPO_DIR/skills/planning-with-files" "$SKILL_DIR"
 cp -R "$REPO_DIR/hooks" "$SKILL_DIR/hooks"
-chmod +x "$SKILL_DIR"/hooks/*.sh "$SKILL_DIR"/hooks/*.py "$SKILL_DIR"/scripts/*.sh 2>/dev/null || true
+chmod +x "$SKILL_DIR"/hooks/*.py "$SKILL_DIR"/scripts/*.sh "$SKILL_DIR"/scripts/*.py 2>/dev/null || true
 log "Skill    -> $SKILL_DIR (+ bundled hooks/)"
 
 # 2) Simplified-Chinese skill
@@ -63,7 +63,7 @@ log "Skill-zh -> $CLAUDE_HOME/skills/planning-with-files-zh"
 
 # 3) Slash commands
 cp "$REPO_DIR"/commands/*.md "$CLAUDE_HOME/commands/"
-log "Commands -> $CLAUDE_HOME/commands/ (/plan, /start, /status, /plan-attest, /plan-goal, /plan-loop, /plan-zh)"
+log "Commands -> $CLAUDE_HOME/commands/ (/plan, /plan-attach, /start, /status, /plan-attest, /plan-goal, /plan-loop, /plan-zh)"
 
 # 4) Hooks into settings.json (derived from hooks/hooks.json; ${CLAUDE_PLUGIN_ROOT} -> skill dir)
 if [ "$WANT_HOOKS" -eq 1 ]; then
@@ -106,9 +106,16 @@ def is_ours(group):
             return True
     return False
 
+# Drop our prior entries from every event (idempotent; also removes events this
+# version no longer uses, e.g. the old PreCompact hook), then add the current ones.
+for event in list(hooks):
+    kept = [g for g in hooks.get(event, []) if not is_ours(g)]
+    if kept:
+        hooks[event] = kept
+    else:
+        del hooks[event]
 for event, groups in plugin_hooks.items():
-    kept = [g for g in hooks.get(event, []) if not is_ours(g)]  # drop our prior entries (idempotent)
-    hooks[event] = kept + groups
+    hooks[event] = hooks.get(event, []) + groups
 
 with open(settings_path, "w", encoding="utf-8") as fh:
     json.dump(settings, fh, ensure_ascii=False, indent=2)
@@ -123,8 +130,10 @@ fi
 log "Done. Restart Claude Code (or open a new session) to load the skill, commands, and hooks."
 cat <<EOF
 
-Per-project gating (optional): in any project,
-    mkdir -p .planning && echo on > .planning/.hooks_mode    # on | off | session
-Type \`临时任务 ...\` in a prompt to silence planning hooks for that one turn.
+Each session only sees the plan bound to it. Create one with init-session.sh --plan-dir,
+or bind an existing plan with /plan-attach (scripts/session-plan.sh attach <PLAN_ID>).
+Per-project switch (optional): echo off > .planning/.hooks_mode
+Stop behaviour: PWF_STOP_MODE or .planning/.stop_mode = sync (default) | continue | off
+Type \`临时任务 ...\` in a prompt to silence planning hooks until your next normal prompt.
 See docs/claude-setup.md for the full guide.
 EOF

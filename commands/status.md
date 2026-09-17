@@ -1,16 +1,21 @@
 ---
-description: "Show current planning status at a glance - phases, progress, and any logged errors."
+description: "Show this session's planning status at a glance - bound plan, phases, progress, and any logged errors."
+allowed-tools: "Read Bash"
 ---
 
-Read task_plan.md from the current project directory and display a compact status summary.
+Show a compact status summary of the plan bound to THIS session.
+
+1. Run `sh "${CLAUDE_PLUGIN_ROOT}/scripts/session-plan.sh" show`.
+   - Exit code 1 (no plan bound): print the "No plan bound" block below and stop. Do NOT fall back to `.planning/.active_plan`, another plan directory, or a root-level `task_plan.md` in a project that has `.planning/`.
+2. Read the `task_plan` path it printed and summarise it.
 
 ## What to Show
 
-1. **Current Phase**: Extract from "## Current Phase" section
-2. **Phase Progress**: Count phases and their status (pending/in_progress/complete)
-3. **Phase List**: Show each phase with status icon
-4. **Errors**: Count entries in "## Errors Encountered" table if present
-5. **Files Check**: Confirm which planning files exist
+1. **Plan**: plan id and title
+2. **Current Phase**: from "## Current Phase" (or "## 当前阶段")
+3. **Phase Progress**: count phases and their status (pending/in_progress/complete)
+4. **Phase List**: each phase with a status icon
+5. **Errors**: number of rows in "## Errors Encountered" if present
 
 ## Status Icons
 
@@ -22,28 +27,24 @@ Read task_plan.md from the current project directory and display a compact statu
 ## Output Format
 
 ```
-📋 Planning Status
+📋 Planning Status — <plan id>
 
 Current: Phase {N} of {total} ({percent}%)
 Status: {status_icon} {status_text}
 
   {icon} Phase 1: {name}
   {icon} Phase 2: {name} ← you are here
-  {icon} Phase 3: {name}
   ...
 
-Files: task_plan.md {✓|✗} | findings.md {✓|✗} | progress.md {✓|✗}
 Errors logged: {count}
 ```
 
-## If No Planning Files Exist
+## If No Plan Is Bound
 
 ```
-📋 No planning files found
+📋 No plan bound to this session
 
-Run /plan to start a new planning session.
+Start one with /plan, or continue an existing plan with /plan-attach.
 ```
 
-## Keep It Brief
-
-This is a quick status check, not a full report. Show just enough to answer "where am I?" without re-reading all the files.
+Keep it brief: just enough to answer "where am I?".

@@ -3,10 +3,13 @@
 # Always exits 0 — uses stdout for status reporting
 # Used by Stop hook to report task completion status
 #
-# Plan-file resolution (v2.40+):
+# Plan-file resolution:
 #   1. $1 (explicit path)
-#   2. resolve-plan-dir.sh: $PLAN_ID env → .planning/.active_plan → newest mtime
-#   3. Legacy ./task_plan.md
+#   2. $PLAN_ID env → ./.planning/$PLAN_ID/
+#   3. Inside a Claude Code session: the plan bound to THIS session (unbound →
+#      report that, never fall back to another session's plan)
+#   4. Plain terminal: resolve-plan-dir.sh (.planning/.active_plan → newest mtime)
+#   5. Legacy ./task_plan.md
 #
 # This restores slug-mode parity: the Stop hook and any caller invoking with
 # zero args now respects the active plan dir instead of silently defaulting to
@@ -18,7 +21,17 @@ else
     SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd 2>/dev/null)" || SCRIPT_DIR="."
     RESOLVER="${SCRIPT_DIR}/resolve-plan-dir.sh"
     PLAN_DIR=""
-    if [ -f "${RESOLVER}" ]; then
+    if [ -z "${PLAN_ID:-}" ] && [ -f "${SCRIPT_DIR}/session-lib.sh" ]; then
+        # shellcheck source=session-lib.sh
+        . "${SCRIPT_DIR}/session-lib.sh"
+        PLAN_DIR="$(pwf_session_plan_dir)"
+        rc=$?
+        if [ "$rc" -eq 1 ]; then
+            echo "[planning-with-files] No plan is bound to this Claude session (see session-plan.sh list / attach)."
+            exit 0
+        fi
+    fi
+    if [ -z "${PLAN_DIR}" ] && [ -f "${RESOLVER}" ]; then
         PLAN_DIR="$(sh "${RESOLVER}" 2>/dev/null)"
     fi
     if [ -n "${PLAN_DIR}" ] && [ -f "${PLAN_DIR}/task_plan.md" ]; then
