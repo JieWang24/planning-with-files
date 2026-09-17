@@ -76,6 +76,13 @@ def main() -> None:
 
     plan = adapter.session_plan(cwd, sid)
     if plan is None:
+        inherited = adapter.retry_pending_lineage(cwd, sid, payload)
+        if inherited:
+            plan, old_sid = inherited
+            adapter.remember_injection(plan, sid)
+            adapter.emit("PostToolUse",
+                         context=adapter.render_full(plan, [f"Plan binding inherited from earlier session {old_sid[:8]} (resume/fork)."]),
+                         debug_line=adapter.hook_debug_line(cwd, sid, "PostToolUse", "late lineage inheritance", plan))
         return
     reminder = adapter.record_activity(plan, sid, payload)
     if reminder:

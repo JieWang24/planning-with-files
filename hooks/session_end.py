@@ -16,7 +16,10 @@ def main() -> None:
     sid = adapter.session_id_from_payload(payload)
 
     adapter.clear_temporary_disable(sid)
-    if payload.get("reason") != "clear" or adapter.hooks_mode(cwd) == "off":
+    reason = payload.get("reason")
+    if reason in ("clear", "resume"):
+        adapter.mark_process_switched()
+    if reason != "clear" or adapter.hooks_mode(cwd) == "off":
         return
     plan = adapter.locate_bound_plan(cwd, sid)
     if plan is not None:

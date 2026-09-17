@@ -30,6 +30,9 @@ def main() -> None:
         return
     plan = adapter.session_plan(cwd, sid)
     if plan is None:
+        # Bind a resumed/forked session once its transcript is written; the
+        # plan is injected with the next prompt.
+        adapter.retry_pending_lineage(cwd, sid, payload)
         return
     mode = adapter.stop_mode(plan.root)
     if mode == "off":

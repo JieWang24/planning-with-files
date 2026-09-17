@@ -1,4 +1,4 @@
-# Claude 端会话模型（2.44.0-claude.0）：分析、设计与变更清单
+# Claude 端会话模型（2.44.x-claude）：分析、设计与变更清单
 
 > 适用：`claude` 分支（Claude Code 插件）。Codex 端（`~/.codex/...`、`main` 分支）**不在本次改动范围**。
 > 原则：不追求与 Codex 逐行一致；Claude Code 有更合适的原生能力时，按 Claude 的方式设计；两端共享的**磁盘格式**保持兼容。
@@ -54,7 +54,7 @@
 | 新建 | `init-session.sh --plan-dir` 原子写绑定，并打印 `PLAN_ROOT=` / `PLAN_ID=` |
 | 兜底 | PostToolUse 解析 Bash `tool_response.stdout` 的 `PLAN_ID=` 行（读脚本源码不会产生行首 `PLAN_ID=`，天然防误绑）；解析不到时才用 PreToolUse 快照的 `.active_plan` 前后对比 |
 | 续做 | `session-plan.sh attach <PLAN_ID>` / `/plan-attach`（不改 `.active_plan`，附带按计划过滤的 catchup） |
-| resume / fork | SessionStart 扫描 transcript 中出现过的旧 sessionId，继承最近一个有绑定的；若 transcript 尚未写入，首个 UserPromptSubmit 再试一次 |
+| resume / fork | 依次尝试：① Claude 进程命令行里的 `--resume <id>`（SessionStart 时即可用；进程内 `/resume`、`/clear` 后由 SessionEnd 标记为失效）；② transcript 中的旧 sessionId（旧版本 Claude Code）；③ 与已绑定会话 transcript 共享的消息 uuid（2.1.271 起 fork 会把 sessionId 全部改写为新 id，但保留消息 uuid）。transcript 异步写入可能滞后，失败时在后续 UserPromptSubmit / PostToolUse / Stop 最多重试 5 次 |
 | /clear | SessionEnd(reason=clear) 写交接记录（插件数据目录，带 Claude 进程号与时间戳）→ SessionStart(source=clear) 消费并绑定新 session_id，附带 catchup；若 SessionStart 先于 SessionEnd 触发，首个 UserPromptSubmit 再消费一次 |
 
 ### 2.4 各 hook 行为
@@ -104,6 +104,22 @@
 - 本地：插件缓存升级到 2.44.0-claude.0；`~/.claude/CLAUDE.md` 增加 planning 使用规则。
 
 ## 4. 验证
+
+### 4.1 真实会话验证（Claude Code 2.1.271，haiku，隔离的临时项目，`.active_plan` 指向"别人的任务"，hook debug 开启）
+| 场景 | 结果 |
+|---|---|
+| 新会话未绑定 | SessionStart 仅一条提示，UserPromptSubmit 静默，未注入别人的计划 ✔ |
+| 会话内运行 `init-session.sh --plan-dir` | 原子绑定 + `.attached`；Bash 中 `PWF_SESSION_ID`（经 CLAUDE_ENV_FILE）与 `CLAUDE_CODE_SESSION_ID` 均等于真实 session_id ✔ |
+| `-p --resume`（同 id） | SessionStart 全量注入，提问时两行指针 ✔ |
+| 只写非计划文件后结束 | Stop 以 `hook_additional_context`（非错误）请求记进度 → 模型更新 progress.md → 第二次 Stop 安静 ✔ |
+| `/planning-with-files:plan-attach <id>`（新会话） | 绑定到指定计划，`.active_plan` 不变 ✔ |
+| `--resume --fork-session`（新 id） | 首版失败（fork transcript 的 sessionId 已被改写、且写入滞后）；修复后 SessionStart 通过进程 `--resume` 参数继承并注入 ✔ |
+| 交互式 `/clear` | SessionEnd 写交接 → 新会话 SessionStart 注入计划 + "carried over" + PLAN CATCHUP ✔ |
+| 交互式 `/compact` | SessionStart(compact) 重新注入 + 重读提示 ✔ |
+
+未在真实会话中覆盖（仅冒烟测试模拟）：PermissionRequest 提示、PostToolUse 活动窗口提醒阈值、subagent 抑制、`continue` Stop 模式。
+
+### 4.2 冒烟测试
 ```bash
 python3 tools/smoke_test_session_model.py
 ```

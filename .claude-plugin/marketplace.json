@@ -10,7 +10,7 @@
       "name": "planning-with-files",
       "source": "./",
       "description": "Claude Code fork of planning-with-files (Manus-style persistent planning files). Strict per-session plan binding: each session sees only its own .planning/sessions/<id>.active_plan (never the project .active_plan), bound by init-session, /plan-attach, resume/fork lineage and /clear handoff; low-noise injection with change fingerprints; Stop progress-sync feedback; plan-scoped catchup; attestation, 临时任务 suppression and hook debug.",
-      "version": "2.44.0-claude.0"
+      "version": "2.44.1-claude.0"
     }
   ]
 }

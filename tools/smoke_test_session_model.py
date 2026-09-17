@@ -172,6 +172,29 @@ def main() -> int:
     check((proj / ".planning" / "sessions" / f"{S4}.active_plan").read_text().strip() == new_id
           and "inherited" in ctx(out), "S4 inherited S1's plan", ctx(out)[:400])
 
+    S8 = "88888888-8888-4888-8888-888888888888"
+    S9 = "99999999-9999-4999-8999-999999999999"
+    fork_dir = env.home / "fork"
+    fork_dir.mkdir()
+    msgs = [f"aaaaaaaa-0000-4000-8000-00000000000{i}" for i in range(4)]
+
+    def lines(session: str, uuids: list[str]) -> str:
+        return "".join(json.dumps({"type": "user", "uuid": u, "sessionId": session}, separators=(",", ":")) + "\n" for u in uuids)
+
+    (fork_dir / f"{S1}.jsonl").write_text(lines(S1, msgs))
+    (fork_dir / f"{S3}.jsonl").write_text(lines(S3, ["bbbbbbbb-0000-4000-8000-000000000000"]))
+    (fork_dir / f"{S8}.jsonl").write_text(lines(S8, msgs + ["cccccccc-0000-4000-8000-000000000000"]))
+    out = env.hook("session_start.py", {**common, "session_id": S8, "source": "fork", "transcript_path": str(fork_dir / f"{S8}.jsonl")})
+    check((proj / ".planning" / "sessions" / f"{S8}.active_plan").read_text().strip() == new_id
+          and "inherited" in ctx(out), "fork with rewritten sessionIds inherits via shared message uuids", ctx(out)[:300])
+    (fork_dir / f"{S9}.jsonl").write_text("")
+    out = env.hook("session_start.py", {**common, "session_id": S9, "source": "fork", "transcript_path": str(fork_dir / f"{S9}.jsonl")})
+    check(ctx(out) == "", "fork before transcript is written: no hint, retry pending")
+    (fork_dir / f"{S9}.jsonl").write_text(lines(S9, msgs[:2]))
+    out = env.hook("user_prompt_submit.py", {**common, "session_id": S9, "prompt": "go", "transcript_path": str(fork_dir / f"{S9}.jsonl")})
+    check((proj / ".planning" / "sessions" / f"{S9}.active_plan").read_text().strip() == new_id
+          and "inherited" in ctx(out), "first prompt retries lineage and inherits", ctx(out)[:300])
+
     print("[7] /clear carries the binding over (SessionEnd → SessionStart)")
     env.hook("session_end.py", {**common, "session_id": S1, "reason": "clear"})
     out = env.hook("session_start.py", {**common, "session_id": S5, "source": "clear"})

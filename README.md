@@ -19,10 +19,10 @@ cd planning-with-files && git checkout claude
 ```
 装完**新开会话**。完整步骤/验证/故障排查见 **[docs/claude-setup.md](docs/claude-setup.md)**；设计与变更见 **[docs/claude-session-model.md](docs/claude-session-model.md)**。
 
-## 会话模型（2.44.0-claude.0）
+## 会话模型（2.44.x-claude）
 
 - **每个会话只处理绑定到它的计划**：`.planning/sessions/<session-id>.active_plan`。未绑定会话不注入任何计划内容；项目 `.planning/.active_plan` 只是"最近创建的计划"，永远不作为会话计划。
-- **绑定方式**：`init-session.sh --plan-dir "<任务名>"`（新建并绑定）、`/plan-attach <PLAN_ID>`（续做已有计划）、resume/fork 自动继承、`/clear` 自动交接。
+- **绑定方式**：`init-session.sh --plan-dir "<任务名>"`（新建并绑定）、`/plan-attach <PLAN_ID>`（续做已有计划）、resume/fork 自动继承（进程 `--resume` 参数 / transcript 谱系）、`/clear` 自动交接。
 - **低噪音**：计划变化才注入全文，否则两行指针；无每命令提醒；subagent 不提醒；压缩后自动重注入。
 - **进度同步**：Stop 默认 `sync`——本轮有改动却没更新计划文件时，以非错误反馈请求记一条进度；`continue` 模式可恢复"未完成就继续"。
 - **临时任务**：提问含 `临时任务`，本会话 planning 钩子静默到下次正常提问。

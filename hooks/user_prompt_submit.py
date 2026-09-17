@@ -32,8 +32,7 @@ def main() -> None:
     extra = ""
     state = adapter.load_state(sid) if plan is None else {}
     if plan is None and state.get("pending_lineage"):
-        adapter.update_state(sid, pending_lineage=None)
-        inherited = adapter.inherit_from_lineage(cwd, sid, payload)
+        inherited = adapter.retry_pending_lineage(cwd, sid, payload)
         if inherited:
             plan, old_sid = inherited
             notes.append(f"Plan binding inherited from earlier session {old_sid[:8]} (resume).")

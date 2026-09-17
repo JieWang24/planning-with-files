@@ -58,6 +58,7 @@ PLAN_ID_LINE_RE = re.compile(r"^PLAN_ID=([A-Za-z0-9_][A-Za-z0-9._-]*)\s*$", re.M
 PLAN_ROOT_LINE_RE = re.compile(r"^PLAN_ROOT=(/.+?)\s*$", re.MULTILINE)
 DETACHED_LINE_RE = re.compile(r"^PWF_DETACHED=([A-Za-z0-9_][A-Za-z0-9._-]*)\s*$", re.MULTILINE)
 TRANSCRIPT_SESSION_RE = re.compile(rb'"sessionId":"([0-9a-fA-F-]{36})"')
+TRANSCRIPT_UUID_RE = re.compile(rb'"uuid":"([0-9a-fA-F-]{36})"')
 
 EDIT_TOOLS = {"Write", "Edit", "MultiEdit", "NotebookEdit"}
 # PostToolUse nudges once per activity window when this much happened without
@@ -454,29 +455,160 @@ def lineage_session_ids(transcript_path: Any, current_sid: Optional[str]) -> lis
     return [sid for sid, _ in sorted(order.items(), key=lambda item: item[1], reverse=True)]
 
 
+def _transcript_uuids(path: Path) -> set[bytes]:
+    try:
+        return set(TRANSCRIPT_UUID_RE.findall(path.read_bytes()))
+    except OSError:
+        return set()
+
+
+def _bound_sessions(cwd: Path, current_sid: str) -> list[tuple[Path, str]]:
+    found = []
+    for directory in _ancestors(cwd):
+        folder = directory / ".planning" / "sessions"
+        if not folder.is_dir():
+            continue
+        for entry in folder.glob("*.active_plan"):
+            other = safe_session_id(entry.name[: -len(".active_plan")])
+            if other and other != current_sid:
+                found.append((directory, other))
+    return found
+
+
+def parent_by_shared_messages(cwd: Path, sid: str, transcript_path: Any) -> Optional[tuple[Plan, str]]:
+    """Newer Claude Code rewrites sessionId when forking/resuming into a new
+    session but keeps message uuids. The bound session whose transcript shares
+    the most message uuids with ours is the parent."""
+    if not isinstance(transcript_path, str) or not transcript_path:
+        return None
+    transcript = Path(transcript_path)
+    own = _transcript_uuids(transcript)
+    if not own:
+        return None
+    best: Optional[tuple[tuple[int, float], Plan, str]] = None
+    for root, other in _bound_sessions(cwd, sid):
+        candidate = transcript.parent / f"{other}.jsonl"
+        if not candidate.is_file():
+            continue
+        shared = len(own & _transcript_uuids(candidate))
+        plan = bound_plan_at(root, other) if shared else None
+        if plan is None:
+            continue
+        key = (shared, _mtime(candidate))
+        if best is None or key > best[0]:
+            best = (key, plan, other)
+    return (best[1], best[2]) if best else None
+
+
 def inherit_from_lineage(cwd: Path, sid: Optional[str], payload: dict[str, Any]) -> Optional[tuple[Plan, str]]:
+    """Parent session of a resumed/forked session with a new id: the
+    --resume argument of the Claude process, else earlier session ids in the
+    transcript, else shared message uuids (transcripts may lag behind)."""
     if not sid:
         return None
-    for old_sid in lineage_session_ids(payload.get("transcript_path"), sid):
+    for old_sid in resumed_session_ids(sid) + lineage_session_ids(payload.get("transcript_path"), sid):
         plan = locate_bound_plan(cwd, old_sid)
         if plan and bind_session(plan.root, sid, plan.plan_id):
             return plan, old_sid
+    parent = parent_by_shared_messages(cwd, sid, payload.get("transcript_path"))
+    if parent and bind_session(parent[0].root, sid, parent[0].plan_id):
+        return parent
     return None
 
 
-def claude_process_key() -> str:
-    """Identify the Claude Code process across /clear (hooks run as sh -> python)."""
-    pid = os.environ.get("CLAUDE_PID", "").strip()
-    if pid.isdigit():
-        return pid
+def _ps(pid: str, field: str) -> str:
     try:
-        out = subprocess.run(
-            ["ps", "-o", "ppid=", "-p", str(os.getppid())],
-            capture_output=True, text=True, timeout=2, check=False,
+        return subprocess.run(
+            ["ps", "-o", f"{field}=", "-p", pid], capture_output=True, text=True, timeout=2, check=False,
         ).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return ""
-    return out if out.isdigit() else ""
+
+
+_CLAUDE_PROCESS: Optional[tuple[str, str]] = None
+
+
+def claude_process() -> tuple[str, str]:
+    """(pid, args) of the Claude Code process running this hook, or ("", "").
+
+    Walks up from the hook process to the nearest ancestor whose executable is
+    named ``claude``; CLAUDE_PID is trusted when it is set."""
+    global _CLAUDE_PROCESS
+    if _CLAUDE_PROCESS is not None:
+        return _CLAUDE_PROCESS
+    result = ("", "")
+    pid = os.environ.get("CLAUDE_PID", "").strip()
+    if pid.isdigit():
+        result = (pid, _ps(pid, "args"))
+    else:
+        pid = str(os.getppid())
+        for _ in range(6):
+            if not pid.isdigit() or pid in ("0", "1"):
+                break
+            if os.path.basename(_ps(pid, "comm")) == "claude":
+                result = (pid, _ps(pid, "args"))
+                break
+            pid = _ps(pid, "ppid")
+    _CLAUDE_PROCESS = result
+    return result
+
+
+def claude_process_key() -> str:
+    """Identify the Claude Code process across /clear."""
+    return claude_process()[0]
+
+
+RESUME_ARG_RE = re.compile(r"(?:^|\s)(?:--resume|-r)(?:\s+|=)([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})")
+
+
+def _process_switched_marker(key: str) -> Path:
+    return state_dir() / "handoff" / f"switched-{key}"
+
+
+def mark_process_switched() -> None:
+    """After /resume or /clear inside a process, its --resume argument is stale."""
+    key = claude_process_key()
+    if not key:
+        return
+    marker = _process_switched_marker(key)
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(str(time.time()), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _process_started_at(pid: str) -> float:
+    try:
+        return time.mktime(time.strptime(_ps(pid, "lstart"), "%a %b %d %H:%M:%S %Y"))
+    except (ValueError, OverflowError):
+        return 0.0
+
+
+def resumed_session_ids(current_sid: Optional[str]) -> list[str]:
+    """Session ids passed to the Claude process via --resume / -r (fork or resume)."""
+    key, args = claude_process()
+    if not key:
+        return []
+    marker = _process_switched_marker(key)
+    if marker.exists() and _mtime(marker) >= _process_started_at(key) - 1:
+        return []  # this process switched sessions since it started (pid reuse is ignored)
+    ids = [sid.lower() for sid in RESUME_ARG_RE.findall(args)]
+    return [sid for sid in ids if sid != (current_sid or "").lower()]
+
+
+LINEAGE_RETRIES = 5
+
+
+def retry_pending_lineage(cwd: Path, sid: Optional[str], payload: dict[str, Any]) -> Optional[tuple[Plan, str]]:
+    """Retry resume/fork inheritance a few times while the transcript catches up."""
+    pending = load_state(sid).get("pending_lineage")
+    if not pending:
+        return None
+    inherited = inherit_from_lineage(cwd, sid, payload)
+    remaining = (pending if isinstance(pending, int) and not isinstance(pending, bool) else LINEAGE_RETRIES) - 1
+    update_state(sid, pending_lineage=None if inherited or remaining <= 0 else remaining)
+    return inherited
 
 
 def write_clear_handoff(plan: Plan, sid: Optional[str]) -> None:
@@ -875,6 +1007,8 @@ def hook_debug_line(cwd: Path, sid: Optional[str], hook: str, note: str = "", pl
         "session_plan": plan.label if plan else "",
         "project_active_plan": project_active_plan_id(root),
         "note": note,
+        "claude_pid": claude_process_key(),
+        "resume_args": resumed_session_ids(sid),
     }
     log_path = root / ".planning" / "debug" / "hook-events.jsonl"
     if (root / ".planning").is_dir():

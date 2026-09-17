@@ -38,7 +38,7 @@ def main() -> None:
             plan, old_sid = inherited
             notes.append(f"Plan binding inherited from earlier session {old_sid[:8]} ({source}).")
         else:
-            adapter.update_state(sid, pending_lineage=True)
+            adapter.update_state(sid, pending_lineage=adapter.LINEAGE_RETRIES)
 
     if plan is None and source == "clear":
         handed = adapter.consume_clear_handoff(cwd, sid)
@@ -70,7 +70,8 @@ def main() -> None:
         adapter.emit("SessionStart", context=text, debug_line=debug_line)
         return
 
-    hint = "" if source == "compact" else adapter.unbound_hint(cwd)
+    # resume/fork restore the conversation; lineage is retried on the first prompt.
+    hint = "" if source in ("compact", "resume", "fork") else adapter.unbound_hint(cwd)
     debug_line = adapter.hook_debug_line(cwd, sid, "SessionStart", f"{source}: unbound")
     adapter.emit("SessionStart", context=hint, debug_line=debug_line)
 
